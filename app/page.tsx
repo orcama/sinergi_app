@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import {
   Mail,
@@ -80,12 +81,15 @@ export default function Home() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
+  const router = useRouter();
+
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     const data = isSignUp
       ? { name, email, password }
       : { email, password };
     console.log(isSignUp ? "Create account" : "Sign in", data);
+    router.push("/chat");
   };
 
   return (
