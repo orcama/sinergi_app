@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Plus,
@@ -203,6 +204,7 @@ function Sidebar({
   openMenuId: string | null;
   setOpenMenuId: (id: string | null) => void;
 }) {
+  const router = useRouter();
   return (
     <aside
       className={`flex h-full shrink-0 flex-col bg-[#1A1625] text-white transition-[width] duration-300 ${
@@ -302,9 +304,12 @@ function Sidebar({
         {!isCollapsed && (
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-semibold">Ahmad Developer</div>
-            <span className="mt-0.5 inline-block rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-white/70">
-              Free
-            </span>
+            <button
+              onClick={() => router.push("/")}
+              className="mt-0.5 inline-block rounded-full bg-white/10 px-3 py-0.5 text-[10px] font-semibold text-white/70 transition-colors hover:bg-white/20 hover:text-white"
+            >
+              Log out
+            </button>
           </div>
         )}
       </div>
