@@ -243,11 +243,17 @@ function Sidebar({
           <Plus className="h-5 w-5 shrink-0 text-pink-400" />
           {!isCollapsed && <span>New Chat</span>}
         </button>
-        <button className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition-colors hover:bg-white/10">
+        <button
+          onClick={() => router.push("/library")}
+          className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition-colors hover:bg-white/10"
+        >
           <Library className="h-5 w-5 shrink-0 text-pink-400" />
           {!isCollapsed && <span>Library</span>}
         </button>
-        <button className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition-colors hover:bg-white/10">
+        <button
+          onClick={() => router.push("/project")}
+          className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition-colors hover:bg-white/10"
+        >
           <FolderKanban className="h-5 w-5 shrink-0 text-pink-400" />
           {!isCollapsed && <span>Project</span>}
         </button>
