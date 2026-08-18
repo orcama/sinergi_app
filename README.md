@@ -1,4 +1,53 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+This is a Next.js frontend with a FastAPI gateway to a local vLLM Metal model server.
+
+Backend installation, startup, environment, and troubleshooting instructions
+are available in [backend/DOCUMENTATION.md](./backend/DOCUMENTATION.md).
+
+## Local chat stack (Mac mini M4)
+
+The configured model is `mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-4bit`, an
+MLX 4-bit conversion of `deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B`. The model is
+not vendored in this repository. Hugging Face weights are downloaded only when
+`vllm serve` is first started on the Mac.
+
+Requirements: Apple Silicon macOS, native arm64 Python 3.12, Node.js, and `uv`.
+
+Install vLLM Metal using its official installer (it uses `uv` and creates
+`~/.venv-vllm-metal`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/vllm-project/vllm-metal/main/install.sh | bash
+```
+
+Install the FastAPI gateway without starting or downloading the model:
+
+```bash
+cd backend
+uv sync
+cp .env.example .env
+```
+
+When you are ready to download and serve the model, run these in three terminals:
+
+```bash
+# Terminal 1: vLLM Metal (this is the command that downloads the model on first use)
+source ~/.venv-vllm-metal/bin/activate
+vllm serve mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-4bit \
+  --served-model-name mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-4bit \
+  --host 127.0.0.1 --port 8000 --max-model-len 4096 --max-num-seqs 2
+
+# Terminal 2: FastAPI gateway
+cd backend
+uv run --env-file .env fastapi dev app/main.py --host 127.0.0.1 --port 8001
+
+# Terminal 3: Next.js frontend
+cp .env.example .env.local
+npm run dev
+```
+
+Open `http://localhost:3000/chat`. Gateway health is available at
+`http://127.0.0.1:8001/health`, and its OpenAPI docs are at
+`http://127.0.0.1:8001/docs`.
 
 ## Getting Started
 

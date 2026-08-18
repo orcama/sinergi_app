@@ -39,50 +39,30 @@ function uid(prefix: string): string {
   return `${prefix}-${rand}`;
 }
 
-const KEYWORDS = ["putusan", "tppo", "tipikor", "pidana", "pengadilan", "vonis"];
+const CHAT_API_URL =
+  process.env.NEXT_PUBLIC_CHAT_API_URL ?? "http://127.0.0.1:8001";
 
-function simulateAIResponse(userMessage: string): Promise<ChatMessage> {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      const mentionsPutusan = KEYWORDS.some((kw) =>
-        userMessage.toLowerCase().includes(kw)
-      );
-
-      const baseContent = mentionsPutusan
-        ? `Berdasarkan analisis terhadap perkara tersebut, berikut ringkasan yang dapat saya berikan.\n\nPutusan ini merupakan perkara pidana yang telah diputus oleh Pengadilan Negeri Kupang. Majelis hakim menilai berdasarkan alat bukti dan keterangan para saksi yang diajukan di persidangan.\n\nPertimbangan pokok yang menjadi dasar putusan meliputi:\n\n1. Kualifikasi perbuatan yang didakwakan oleh Jaksa Penuntut Umum.\n2. Kesesuaian alat bukti dengan fakta-fakta hukum di persidangan.\n3. Hal yang memberatkan dan meringankan terdakwa.\n\nSaya mereferensikan putusan terkait pada panel sebelah kanan untuk Anda tinjau lebih lanjut.`
-        : `Terima kasih atas pertanyaan Anda.\n\nBerdasarkan pengetahuan hukum yang saya miliki, hal ini dapat dijelaskan dengan beberapa poin penting berikut:\n\n1. Prinsip dasar yang relevan dengan pertanyaan Anda.\n\n2. Penerapan dalam praktik peradilan.\n\nApabila Anda memiliki konteks tambahan atau ingin mendalami bagian tertentu, silakan tanyakan kembali.`;
-
-      const sources: Source[] | undefined = mentionsPutusan
-        ? [
-            {
-              id: "1",
-              title: "Putusan Nomor 1/Pid.Sus/2026/PN.KPN",
-              hakim: "H. Muhammad Yusuf, S.H.",
-              hakimAnggota: "Dra. Siti Aminah, S.H., M.H.",
-              tanggalDitetapkan: "12 Februari 2026",
-              tanggalDibacakan: "17 Februari 2026",
-              tingkat: "Pertama",
-            },
-            {
-              id: "2",
-              title: "Putusan Nomor 45/Pid.Sus/2025/PN.KPN",
-              hakim: "Rizky Pratama, S.H., M.H.",
-              hakimAnggota: "Dewi Lestari, S.H.",
-              tanggalDitetapkan: "3 September 2025",
-              tanggalDibacakan: "9 September 2025",
-              tingkat: "Pertama",
-            },
-          ]
-        : undefined;
-
-      resolve({
-        id: uid("ai"),
-        role: "assistant",
-        content: baseContent,
-        sources,
-      });
-    }, 1000);
+async function requestAIResponse(
+  messages: Pick<ChatMessage, "role" | "content">[]
+): Promise<ChatMessage> {
+  const response = await fetch(`${CHAT_API_URL}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ messages }),
   });
+
+  const payload = (await response.json().catch(() => null)) as
+    | { message?: { content?: string }; detail?: string }
+    | null;
+
+  if (!response.ok) {
+    throw new Error(payload?.detail || `Chat backend returned ${response.status}`);
+  }
+
+  const content = payload?.message?.content?.trim();
+  if (!content) throw new Error("The model returned an empty response.");
+
+  return { id: uid("ai"), role: "assistant", content };
 }
 
 /* ------------------------------------------------------------------ */
@@ -592,18 +572,39 @@ export default function ChatPage() {
         );
       }
 
-      const aiResponse = await simulateAIResponse(trimmed);
+      const conversation = [
+        ...(activeSession?.messages ?? []),
+        userMessage,
+      ].map(({ role, content }) => ({ role, content }));
 
-      setChatSessions((prev) =>
-        prev.map((s) => {
-          if (s.id !== sessionId) return s;
-          const withoutLoading = s.messages.filter((m) => m.id !== loadingMsg.id);
-          return { ...s, messages: [...withoutLoading, aiResponse] };
-        })
-      );
-      setIsLoading(false);
+      try {
+        const aiResponse = await requestAIResponse(conversation);
+        setChatSessions((prev) =>
+          prev.map((s) => {
+            if (s.id !== sessionId) return s;
+            const withoutLoading = s.messages.filter((m) => m.id !== loadingMsg.id);
+            return { ...s, messages: [...withoutLoading, aiResponse] };
+          })
+        );
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : "Unknown error";
+        const errorResponse: ChatMessage = {
+          id: uid("ai-error"),
+          role: "assistant",
+          content: `Tidak dapat menghubungi model: ${detail}`,
+        };
+        setChatSessions((prev) =>
+          prev.map((s) => {
+            if (s.id !== sessionId) return s;
+            const withoutLoading = s.messages.filter((m) => m.id !== loadingMsg.id);
+            return { ...s, messages: [...withoutLoading, errorResponse] };
+          })
+        );
+      } finally {
+        setIsLoading(false);
+      }
     },
-    [activeSessionId, isLoading]
+    [activeSession, activeSessionId, isLoading]
   );
 
   const handlePickTemplate = (text: string) => {

@@ -1,0 +1,23 @@
+[project]
+name = "sinergi-chat-backend"
+version = "0.1.0"
+description = "FastAPI gateway for the local vLLM Metal chat model"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "fastapi[standard]>=0.133.0,<0.137",
+  "httpx>=0.28.1,<0.29",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3,<9",
+  "pytest-asyncio>=0.25,<1",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.uv]
+package = false
