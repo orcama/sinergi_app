@@ -375,3 +375,83 @@ def test_flatten_content_with_pdf() -> None:
     assert isinstance(flattened, str)
     assert "Isi surat" in flattened
     assert "Ringkas." in flattened
+
+
+LEGAL_PDF_TEXT = (
+    "P U T U S A N\nNomor 123/Pid.B/2026/PN.JKT\nDEMI KEADILAN "
+    "BERDASARKAN KETUHANAN YANG MAHA ESA\nM E N G A D I L I:\n"
+    "1. Menyatakan Terdakwa bersalah melakukan tindak pidana penggelapan;"
+)
+
+
+@pytest.mark.asyncio
+async def test_rag_ingest_sectionizes_pdf() -> None:
+    pdf = make_test_pdf(LEGAL_PDF_TEXT)
+    app.state.rag_docs = {}
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/api/rag/ingest",
+            json={"name": "putusan.pdf", "data": pdf},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["name"] == "putusan.pdf"
+    assert payload["char_count"] > 0
+    keys = [section["key"] for section in payload["sections"]]
+    assert "nomor_putusan" in keys
+    assert "amar_putusan" in keys
+
+
+@pytest.mark.asyncio
+async def test_rag_query_retrieves_relevant_section() -> None:
+    pdf = make_test_pdf(LEGAL_PDF_TEXT)
+    app.state.rag_docs = {}
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        ingest = await client.post(
+            "/api/rag/ingest",
+            json={"name": "putusan.pdf", "data": pdf},
+        )
+        doc_id = ingest.json()["id"]
+        query = await client.post(
+            "/api/rag/query",
+            json={"question": "Apa amar putusannya?", "document_ids": [doc_id]},
+        )
+
+    assert query.status_code == 200
+    payload = query.json()
+    assert payload["hits"]
+    assert any(hit["key"] == "amar_putusan" for hit in payload["hits"])
+
+
+@pytest.mark.asyncio
+async def test_rag_query_inline_text() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/api/rag/query",
+            json={"question": "Siapa yang memutus?", "text": LEGAL_PDF_TEXT},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["hits"]
+
+
+@pytest.mark.asyncio
+async def test_rag_query_unknown_document_rejected() -> None:
+    app.state.rag_docs = {}
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/api/rag/query",
+            json={"question": "Apa amar putusannya?", "document_ids": ["nope"]},
+        )
+
+    assert response.status_code == 404
+    assert "Unknown RAG document" in response.json()["detail"]

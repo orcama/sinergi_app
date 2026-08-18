@@ -5,6 +5,7 @@ import io
 import json
 import os
 import re
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Literal
@@ -15,6 +16,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 from pypdf import PdfReader
+
+from app.rag import SECTION_LABELS, retrieve, sectionize
 
 DEFAULT_MODEL = "mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-4bit"
 DEFAULT_WANDB_MODEL = "MiniMaxAI/MiniMax-M3"
@@ -39,6 +42,20 @@ def wandb_key_from_models_md() -> str:
     return match.group(1) if match else ""
 
 
+def context_window_from_models_md(default: int = 262_000) -> int:
+    """Read the deployed model's context window (e.g. ``262k``) from models.md."""
+    models_md = Path(__file__).resolve().parent.parent / "models.md"
+    if models_md.is_file():
+        match = re.search(
+            r"Context\s+window[^\d]*?(\d+(?:\.\d+)?)\s*k",
+            models_md.read_text(encoding="utf-8"),
+            re.IGNORECASE | re.DOTALL,
+        )
+        if match:
+            return int(float(match.group(1)) * 1000)
+    return default
+
+
 VLLM_BASE_URL = os.getenv("VLLM_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 MODEL_ID = os.getenv("MODEL_ID", DEFAULT_MODEL)
 SYSTEM_PROMPT = os.getenv("CHAT_SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT)
@@ -58,6 +75,10 @@ class ProviderConfig(BaseModel):
     kind: Literal["vllm", "wandb"]
     supports_images: bool = False
     api_key_env: str | None = None
+    context_window: int = 128_000
+
+
+LOCAL_CONTEXT_WINDOW = 128_000
 
 
 def _default_providers() -> list[ProviderConfig]:
@@ -69,6 +90,7 @@ def _default_providers() -> list[ProviderConfig]:
             base_url=VLLM_BASE_URL,
             kind="vllm",
             supports_images=False,
+            context_window=LOCAL_CONTEXT_WINDOW,
         ),
         ProviderConfig(
             id="wandb",
@@ -78,6 +100,7 @@ def _default_providers() -> list[ProviderConfig]:
             kind="wandb",
             supports_images=True,
             api_key_env="WANDB_API_KEY",
+            context_window=context_window_from_models_md(),
         ),
     ]
 
@@ -152,8 +175,51 @@ class ChatResponse(BaseModel):
     provider: str
 
 
-def extract_pdf_text(data: str, max_chars: int = 32_000) -> str:
-    """Extract text from a base64-encoded PDF (with optional data: prefix)."""
+class RagIngestRequest(BaseModel):
+    name: str = Field(default="dokumen.pdf", min_length=1, max_length=255)
+    data: str = Field(min_length=1, max_length=10_000_000)
+
+
+class RagSection(BaseModel):
+    key: str
+    label: str
+    text: str
+
+
+class RagIngestResponse(BaseModel):
+    id: str
+    name: str
+    char_count: int
+    sections: list[RagSection]
+
+
+class RagQueryRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=2_000)
+    document_ids: list[str] = Field(default_factory=list, max_length=10)
+    text: str | None = Field(default=None, max_length=1_000_000)
+    top_k: int = Field(default=3, ge=1, le=10)
+
+
+class RagHit(BaseModel):
+    key: str
+    label: str
+    text: str
+    score: float
+    reason: str
+
+
+class RagQueryResponse(BaseModel):
+    question: str
+    hits: list[RagHit]
+
+
+def extract_pdf_text(data: str, max_chars: int = 32_000, collapse: bool = True) -> str:
+    """Extract text from a base64-encoded PDF (with optional data: prefix).
+
+    When ``collapse`` is True (default, used for chat context) all whitespace
+    runs are collapsed to single spaces. Pass ``collapse=False`` to preserve
+    line breaks for the section-aware RAG pipeline.
+    """
     if "," in data and data.startswith("data:"):
         data = data.split(",", 1)[1]
     try:
@@ -162,7 +228,8 @@ def extract_pdf_text(data: str, max_chars: int = 32_000) -> str:
         text = "\n".join(page.extract_text() or "" for page in reader.pages)
     except Exception:
         return ""
-    text = " ".join(text.split())
+    if collapse:
+        text = " ".join(text.split())
     return text[:max_chars]
 
 
@@ -233,6 +300,7 @@ def flatten_content(content: str | list[ContentPart]) -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.http = httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS)
+    app.state.rag_docs: dict[str, dict] = {}
     yield
     await app.state.http.aclose()
 
@@ -288,6 +356,7 @@ async def list_models() -> JSONResponse:
                     "model": provider.model,
                     "kind": provider.kind,
                     "supports_images": provider.supports_images,
+                    "context_window": provider.context_window,
                     "configured": bool(provider_api_key(provider)),
                 }
                 for provider in PROVIDERS
@@ -381,4 +450,70 @@ async def chat(body: ChatRequest, request: Request) -> ChatResponse:
         message=Message(role="assistant", content=content),
         model=data.get("model", provider.model),
         provider=body.provider,
+    )
+
+
+def _rag_text_for(doc: dict) -> str:
+    """Plain text of an ingested RAG document (already extracted)."""
+    return doc.get("text", "")
+
+
+@app.post("/api/rag/ingest", response_model=RagIngestResponse)
+async def rag_ingest(body: RagIngestRequest, request: Request) -> RagIngestResponse:
+    """Extract and sectionize a base64 PDF, keeping it for later RAG queries."""
+    text = extract_pdf_text(body.data, max_chars=1_000_000, collapse=False)
+    if not text:
+        raise HTTPException(
+            status_code=422,
+            detail=f"PDF '{body.name}' tidak dapat dibaca (tidak ada teks ter-extract).",
+        )
+    sections = sectionize(text)
+    doc_id = str(uuid.uuid4())
+    request.app.state.rag_docs[doc_id] = {"name": body.name, "text": text}
+    return RagIngestResponse(
+        id=doc_id,
+        name=body.name,
+        char_count=len(text),
+        sections=[
+            RagSection(key=key, label=SECTION_LABELS.get(key, key), text=span)
+            for key, span in sections.items()
+            if span and span.strip()
+        ],
+    )
+
+
+@app.post("/api/rag/query", response_model=RagQueryResponse)
+async def rag_query(body: RagQueryRequest, request: Request) -> RagQueryResponse:
+    """Retrieve the most relevant sections of a stored (or inline) document."""
+    sources: list[str] = []
+    if body.text:
+        sources.append(body.text)
+    for doc_id in body.document_ids:
+        doc = request.app.state.rag_docs.get(doc_id)
+        if doc is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown RAG document id '{doc_id}'.",
+            )
+        sources.append(_rag_text_for(doc))
+    if not sources:
+        raise HTTPException(
+            status_code=422,
+            detail="Provide at least one document (text or document_ids).",
+        )
+
+    text = "\n\n".join(sources)
+    hits = retrieve(text, body.question, top_k=body.top_k)
+    return RagQueryResponse(
+        question=body.question,
+        hits=[
+            RagHit(
+                key=hit.key,
+                label=hit.label,
+                text=hit.text,
+                score=hit.score,
+                reason=hit.reason,
+            )
+            for hit in hits
+        ],
     )

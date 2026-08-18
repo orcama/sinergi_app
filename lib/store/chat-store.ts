@@ -1,4 +1,4 @@
-import { create } from "zustand";
+﻿import { create } from "zustand";
 import type { ChatMessage, ChatSession } from "@/lib/types";
 
 function uid(prefix: string): string {
@@ -23,12 +23,20 @@ function daysAgo(n: number, hour = 10): string {
 }
 
 const MODEL_CONTEXT_LIMIT: Record<string, number> = {
-  sft: 32_000,
-  rag: 200_000,
+  "local-sft": 32_000,
+  "local-rag": 128_000,
+  "deployed-sft": 262_000,
+  "deployed-rag": 262_000,
 };
 
-function contextLimitFor(model: "sft" | "rag" | undefined): number {
-  return MODEL_CONTEXT_LIMIT[model ?? "sft"] ?? MODEL_CONTEXT_LIMIT.sft;
+function contextLimitFor(
+  provider: "local" | "deployed" | undefined,
+  model: "sft" | "rag" | undefined
+): number {
+  return (
+    MODEL_CONTEXT_LIMIT[`${provider ?? "local"}-${model ?? "sft"}`] ??
+    MODEL_CONTEXT_LIMIT["local-sft"]
+  );
 }
 
 const SEED_SESSIONS: ChatSession[] = [
@@ -36,7 +44,8 @@ const SEED_SESSIONS: ChatSession[] = [
     id: "seed-1",
     title: "Jelaskan isi Putusan Nomor 1/Pid.Sus/2026/PN.KPN secara singkat",
     model: "rag",
-    contextLimit: contextLimitFor("rag"),
+    provider: "local",
+    contextLimit: contextLimitFor("local", "rag"),
     isPinned: true,
     createdAt: daysAgo(0),
     messages: [
@@ -57,7 +66,8 @@ const SEED_SESSIONS: ChatSession[] = [
     id: "seed-2",
     title: "Apa saja unsur tindak pidana perdagangan orang (TPPO)?",
     model: "sft",
-    contextLimit: contextLimitFor("sft"),
+    provider: "deployed",
+    contextLimit: contextLimitFor("deployed", "sft"),
     createdAt: daysAgo(1),
     messages: [
       {
@@ -77,7 +87,8 @@ const SEED_SESSIONS: ChatSession[] = [
     id: "seed-3",
     title: "Bagaimana alur sidang perkara tindak pidana korupsi (Tipikor)?",
     model: "sft",
-    contextLimit: contextLimitFor("sft"),
+    provider: "deployed",
+    contextLimit: contextLimitFor("deployed", "sft"),
     createdAt: daysAgo(3),
     messages: [
       {
@@ -97,7 +108,8 @@ const SEED_SESSIONS: ChatSession[] = [
     id: "seed-4",
     title: "Rangkum pertimbangan hakim dalam putusan pidana terbaru",
     model: "rag",
-    contextLimit: contextLimitFor("rag"),
+    provider: "local",
+    contextLimit: contextLimitFor("local", "rag"),
     createdAt: daysAgo(6),
     messages: [
       {
@@ -117,7 +129,8 @@ const SEED_SESSIONS: ChatSession[] = [
     id: "seed-5",
     title: "Unsur-unsur tindak pidana penggelapan (Pasal 372 KUHP)",
     model: "sft",
-    contextLimit: contextLimitFor("sft"),
+    provider: "deployed",
+    contextLimit: contextLimitFor("deployed", "sft"),
     createdAt: daysAgo(12),
     messages: [
       {
@@ -140,6 +153,7 @@ interface ChatState {
   activeSessionId: string | null;
   messages: ChatMessage[];
   isLoading: boolean;
+  deployedContextLimit: number;
 
   // selectors (read-only helpers)
   activeSession: () => ChatSession | null;
@@ -155,6 +169,8 @@ interface ChatState {
   deleteChat: (id: string) => void;
   getSession: (id: string) => ChatSession | null;
   setSessionModel: (id: string, model: "sft" | "rag") => void;
+  setSessionProvider: (id: string, provider: "local" | "deployed") => void;
+  setDeployedContextLimit: (limit: number) => void;
 
   // low-level message mutation used by the chat page send flow
   appendUserMessage: (sessionId: string | null, message: ChatMessage) => string;
@@ -171,6 +187,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   activeSessionId: null,
   messages: [],
   isLoading: false,
+  deployedContextLimit: MODEL_CONTEXT_LIMIT["deployed-sft"],
 
   activeSession: () => {
     const { chatSessions, activeSessionId } = get();
@@ -226,9 +243,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ? {
               ...s,
               model,
-              contextLimit: contextLimitFor(model),
+              contextLimit: contextLimitFor(s.provider ?? "local", model),
             }
           : s
+      ),
+    })),
+
+  setSessionProvider: (id, provider) =>
+    set((state) => ({
+      chatSessions: state.chatSessions.map((s) =>
+        s.id === id
+          ? {
+              ...s,
+              provider,
+              contextLimit: contextLimitFor(provider, s.model ?? "sft"),
+            }
+          : s
+      ),
+    })),
+
+  setDeployedContextLimit: (limit) =>
+    set((state) => ({
+      deployedContextLimit: limit,
+      chatSessions: state.chatSessions.map((s) =>
+        s.provider === "deployed" ? { ...s, contextLimit: limit } : s
       ),
     })),
 
@@ -243,7 +281,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           messages: [message],
           createdAt: new Date().toISOString(),
           model: "sft",
-          contextLimit: contextLimitFor("sft"),
+          provider: "local",
+          contextLimit: contextLimitFor("local", "sft"),
         };
         createdId = newSession.id;
         return {

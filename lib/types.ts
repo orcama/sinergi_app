@@ -1,4 +1,4 @@
-export interface Source {
+﻿export interface Source {
   id: string;
   title: string;
   hakim: string;
@@ -6,39 +6,24 @@ export interface Source {
   tanggalDitetapkan: string;
   tanggalDibacakan: string;
   tingkat: string;
+  excerpt?: string; // snippet teks untuk sumber RAG
+  score?: number; // skor relevansi retrieval (RAG)
+  reason?: string; // alasan skor (phrase/tokens/qword/fallback)
 }
 
-<<<<<<< HEAD
 export interface Attachment {
   id: string;
   fileName: string;
   fileSize: number;
   url?: string; // terisi setelah upload sukses
   status: "uploading" | "done" | "error";
-=======
-export interface ChatImage {
-  id: string;
-  name: string;
-  dataUrl: string; // data URI (base64)
-  kind?: "image" | "pdf"; // image dikirim sebagai image_url; pdf hanya dicatat namanya
-}
-
-export interface ModelProvider {
-  id: string;
-  name: string;
-  model: string;
-  kind: "vllm" | "wandb";
-  supportsImages: boolean;
-  configured: boolean;
->>>>>>> f01baba (aingmaung)
+  file?: File; // file asli untuk proses RAG ingest
 }
 
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
-  images?: ChatImage[];
-  model?: string; // model yang menghasilkan balasan
   sources?: Source[]; // hanya ada jika AI mereferensikan putusan
   isLoading?: boolean;
   attachments?: Attachment[];
@@ -50,7 +35,8 @@ export interface ChatSession {
   messages: ChatMessage[];
   createdAt: string;
   isPinned?: boolean;
-  model?: "sft" | "rag"; // model yang dipakai untuk sesi ini
+  model?: "sft" | "rag"; // mode model: fine-tuned vs retrieval
+  provider?: "local" | "deployed"; // local vLLM vs deployed (MiniMax M3)
   contextLimit: number; // token limit sesuai model
   projectId?: string;
   files?: { name: string; url: string }[]; // untuk fitur "View files in chat"

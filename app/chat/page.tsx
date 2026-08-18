@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Image from "next/image";
 import { useRouter } from "next/navigation";
@@ -19,7 +19,6 @@ import {
   FileStack,
   Trash2,
   X,
-<<<<<<< HEAD
   FileText,
   Check,
   CircleX,
@@ -35,45 +34,7 @@ import type {
   Source,
 } from "@/lib/types";
 import { useChatStore } from "@/lib/store/chat-store";
-=======
-  Cpu,
-  Cloud,
-  ImagePlus,
-  FileText,
-} from "lucide-react";
-import type { ChatImage, ChatMessage, ChatSession, ModelProvider, Source } from "@/lib/types";
-
-type Provider = string;
-
-type ApiContentPart =
-  | { type: "text"; text: string }
-  | { type: "image_url"; image_url: { url: string } }
-  | { type: "pdf"; name: string; data: string };
-
-type ApiMessage = {
-  role: "user" | "assistant" | "system";
-  content: string | ApiContentPart[];
-};
-
-const FALLBACK_PROVIDERS: ModelProvider[] = [
-  {
-    id: "vllm",
-    name: "vLLM (Local)",
-    model: "mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-4bit",
-    kind: "vllm",
-    supportsImages: false,
-    configured: true,
-  },
-  {
-    id: "wandb",
-    name: "WandB (MiniMax M3)",
-    model: "MiniMaxAI/MiniMax-M3",
-    kind: "wandb",
-    supportsImages: true,
-    configured: true,
-  },
-];
->>>>>>> f01baba (aingmaung)
+import { hitsToContext, ingestPdf, queryRag, type RagHit } from "@/lib/rag";
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -120,46 +81,86 @@ function formatTokens(n: number): string {
 const CHAT_API_URL =
   process.env.NEXT_PUBLIC_CHAT_API_URL ?? "http://127.0.0.1:8001";
 
-function buildMessageContent(text: string, images: ChatImage[]): string | ApiContentPart[] {
-  const parts: ApiContentPart[] = [];
-  if (text.trim()) parts.push({ type: "text", text });
-  for (const image of images) {
-    if (image.kind === "pdf") {
-      parts.push({ type: "pdf", name: image.name, data: image.dataUrl });
-    } else {
-      parts.push({ type: "image_url", image_url: { url: image.dataUrl } });
-    }
-  }
-  if (parts.length === 0) return "";
-  if (parts.length === 1 && parts[0].type === "text") return parts[0].text;
-  return parts;
-}
-
 async function requestAIResponse(
-  messages: ApiMessage[],
-  provider: Provider
-): Promise<{ message: ChatMessage; model: string }> {
+  messages: Pick<ChatMessage, "role" | "content">[],
+  provider: "vllm" | "wandb",
+  context?: string
+): Promise<ChatMessage> {
+  const body = context
+    ? {
+        provider,
+        messages: messages.map((m, i) =>
+          i === messages.length - 1 && m.role === "user"
+            ? { ...m, content: `${m.content}\n\n[Konteks dokumen]\n${context}` }
+            : m
+        ),
+      }
+    : { provider, messages };
+
   const response = await fetch(`${CHAT_API_URL}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ provider, messages }),
+    body: JSON.stringify(body),
   });
 
-  const payload = (await response.json().catch(() => null)) as
-    | { message?: { content?: string }; detail?: string; model?: string }
+  const data = (await response.json().catch(() => null)) as
+    | { message?: { content?: string }; detail?: string }
     | null;
 
   if (!response.ok) {
-    throw new Error(payload?.detail || `Chat backend returned ${response.status}`);
+    throw new Error(data?.detail || `Chat backend returned ${response.status}`);
   }
 
-  const content = payload?.message?.content?.trim();
+  const content = data?.message?.content?.trim();
   if (!content) throw new Error("The model returned an empty response.");
 
-  return {
-    message: { id: uid("ai"), role: "assistant", content, model: payload?.model },
-    model: payload?.model ?? provider,
-  };
+  return { id: uid("ai"), role: "assistant", content };
+}
+
+function hitsToSources(hits: RagHit[]): Source[] {
+  return hits.map((hit, i) => ({
+    id: uid(`src-${hit.key}`),
+    title: hit.label,
+    hakim: "",
+    hakimAnggota: "",
+    tanggalDitetapkan: "",
+    tanggalDibacakan: "",
+    tingkat: "",
+    excerpt: hit.text.trim(),
+    score: hit.score,
+    reason: hit.reason,
+  }));
+}
+
+async function requestRagResponse(
+  question: string,
+  attachments: Attachment[],
+  conversation: Pick<ChatMessage, "role" | "content">[],
+  provider: "local" | "deployed"
+): Promise<{ message: ChatMessage; sources: Source[] }> {
+  const docIds: string[] = [];
+  const ingestedNames: string[] = [];
+
+  for (const attachment of attachments) {
+    if (attachment.status !== "done" || !attachment.file) {
+      throw new Error(`File "${attachment.fileName}" belum siap untuk diproses.`);
+    }
+    const doc = await ingestPdf(attachment.file);
+    docIds.push(doc.id);
+    ingestedNames.push(doc.name);
+  }
+
+  const hits = await queryRag(question, docIds);
+  const context = hitsToContext(hits);
+  const sources = hitsToSources(hits);
+
+  const message = await requestAIResponse(
+    conversation,
+    provider === "deployed" ? "wandb" : "vllm",
+    context || (ingestedNames.length ? `Dokumen: ${ingestedNames.join(", ")}` : undefined)
+  );
+
+  return { message, sources };
 }
 
 /* ------------------------------------------------------------------ */
@@ -412,7 +413,6 @@ function MessageBubble({ message }: { message: ChatMessage }) {
     return (
       <div className="flex justify-end">
         <div className="max-w-[80%] rounded-2xl bg-[#F5A9F2] px-4 py-3 text-sm font-medium text-purple-900">
-<<<<<<< HEAD
           {message.attachments && message.attachments.length > 0 && (
             <div className="mb-2 flex flex-wrap gap-2">
               {message.attachments.map((attachment) => (
@@ -430,31 +430,6 @@ function MessageBubble({ message }: { message: ChatMessage }) {
                   )}
                 </span>
               ))}
-=======
-          {message.images && message.images.length > 0 && (
-            <div className="mb-2 flex flex-wrap gap-2">
-              {message.images.map((image) =>
-                image.kind === "pdf" ? (
-                  <div
-                    key={image.id}
-                    className="flex items-center gap-1.5 rounded-lg bg-white/60 px-3 py-2 text-xs font-semibold text-purple-800"
-                  >
-                    <FileText className="h-4 w-4" />
-                    <span className="max-w-[160px] truncate">{image.name}</span>
-                  </div>
-                ) : (
-                  <Image
-                    key={image.id}
-                    src={image.dataUrl}
-                    alt={image.name}
-                    width={96}
-                    height={96}
-                    unoptimized
-                    className="h-24 w-24 rounded-lg object-cover"
-                  />
-                )
-              )}
->>>>>>> f01baba (aingmaung)
             </div>
           )}
           {message.content}
@@ -483,11 +458,6 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         <div className="flex items-center gap-2 pb-3">
           <Sparkles className="h-4 w-4 text-pink-500" />
           <span className="text-xs font-bold text-purple-800">LEGAL-VERSE AI</span>
-          {message.model && (
-            <span className="ml-auto rounded-full bg-purple-100 px-2.5 py-0.5 text-[10px] font-semibold text-purple-700">
-              {message.model}
-            </span>
-          )}
         </div>
         <div className="space-y-3 text-sm leading-relaxed text-zinc-800">
           {message.content.split("\n").map((line, i) => {
@@ -531,7 +501,6 @@ function TemplateCard({ text, onPick }: { text: string; onPick: (t: string) => v
   );
 }
 
-<<<<<<< HEAD
 function AttachmentChip({
   attachment,
   onRemove,
@@ -582,6 +551,60 @@ function AttachmentChip({
   );
 }
 
+function ModelSwitch({
+  value,
+  onChange,
+}: {
+  value: "local" | "deployed";
+  onChange: (m: "local" | "deployed") => void;
+}) {
+  const models: { key: "local" | "deployed"; label: string; desc: string }[] = [
+    {
+      key: "local",
+      label: "Local",
+      desc: "vLLM · 128K",
+    },
+    {
+      key: "deployed",
+      label: "Deployed",
+      desc: "MiniMax M3 · 262K",
+    },
+  ];
+
+  return (
+    <div className="flex shrink-0 items-center gap-1 rounded-full border border-zinc-200 bg-zinc-50 p-1">
+      {models.map((model) => {
+        const active = model.key === value;
+        return (
+          <button
+            key={model.key}
+            onClick={() => onChange(model.key)}
+            className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
+              active
+                ? "bg-black text-white shadow"
+                : "text-zinc-500 hover:bg-zinc-100"
+            }`}
+            aria-pressed={active}
+          >
+            <span
+              className={`relative inline-flex h-3.5 w-6 items-center rounded-full transition-colors ${
+                active ? "bg-pink-500" : "bg-zinc-300"
+              }`}
+            >
+              <span
+                className={`inline-block h-2.5 w-2.5 rounded-full bg-white transition-transform ${
+                  active ? "translate-x-3" : "translate-x-0.5"
+                }`}
+              />
+            </span>
+            <span>{model.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function ModelSelector({
   value,
   onChange,
@@ -622,7 +645,7 @@ function ModelSelector({
       <button
         onClick={() => setOpen((v) => !v)}
         className="flex items-center gap-1.5 rounded-full border border-zinc-200 px-3 py-1.5 text-xs font-semibold text-purple-800 transition-colors hover:bg-purple-50"
-        aria-label="Select model"
+        aria-label="Select model mode"
       >
         <Cpu className="h-3.5 w-3.5" />
         {active.label}
@@ -669,7 +692,7 @@ function ModelSelector({
 
 function ContextUsageBar({ session }: { session: ChatSession | null }) {
   if (!session) return null;
-  const limit = session.contextLimit || 200_000;
+  const limit = session.contextLimit || 128_000;
   const used = estimateTokens(session);
   const pct = Math.min(100, (used / limit) * 100);
   const barColor =
@@ -690,45 +713,6 @@ function ContextUsageBar({ session }: { session: ChatSession | null }) {
       </div>
       <span className="pointer-events-none absolute right-0 top-full z-10 mt-1 hidden whitespace-nowrap rounded-lg bg-zinc-900 px-2.5 py-1.5 text-[11px] text-white shadow-lg group-hover:block">
         Semakin dekat limit, riwayat chat lama mungkin akan dipotong otomatis.
-=======
-function ProviderSwitch({
-  providers,
-  provider,
-  onChange,
-  disabled,
-}: {
-  providers: ModelProvider[];
-  provider: Provider;
-  onChange: (p: Provider) => void;
-  disabled: boolean;
-}) {
-  return (
-    <div className="flex flex-col items-center gap-1">
-      <div className="flex items-center gap-1 rounded-full border border-zinc-200 bg-white p-1 shadow-sm">
-        {providers.map((option) => {
-          const active = provider === option.id;
-          const Icon = option.kind === "vllm" ? Cpu : Cloud;
-          return (
-            <button
-              key={option.id}
-              type="button"
-              disabled={disabled}
-              onClick={() => onChange(option.id)}
-              className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                active
-                  ? "bg-[#6B1B7A] text-white"
-                  : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800"
-              }`}
-            >
-              <Icon className="h-3.5 w-3.5" />
-              {option.name}
-            </button>
-          );
-        })}
-      </div>
-      <span className="text-[10px] text-zinc-400">
-        {providers.find((o) => o.id === provider)?.model ?? "Pilih model"}
->>>>>>> f01baba (aingmaung)
       </span>
     </div>
   );
@@ -739,28 +723,25 @@ function ChatInput({
   onChange,
   onSubmit,
   disabled,
-<<<<<<< HEAD
   attachments,
   onAddFiles,
   onRemoveAttachment,
   model,
   onModelChange,
-=======
-  images,
-  onAddImages,
-  onRemoveImage,
->>>>>>> f01baba (aingmaung)
+  provider,
+  onProviderChange,
 }: {
   value: string;
   onChange: (v: string) => void;
   onSubmit: () => void;
   disabled: boolean;
-<<<<<<< HEAD
   attachments: Attachment[];
   onAddFiles: (files: FileList | null) => void;
   onRemoveAttachment: (id: string) => void;
   model: "sft" | "rag";
   onModelChange: (m: "sft" | "rag") => void;
+  provider: "local" | "deployed";
+  onProviderChange: (p: "local" | "deployed") => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canSubmit = value.trim().length > 0 || attachments.length > 0;
@@ -806,93 +787,16 @@ function ChatInput({
           <Plus className="h-5 w-5" />
         </button>
         <ModelSelector value={model} onChange={onModelChange} />
+        <ModelSwitch value={provider} onChange={onProviderChange} />
         <input
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder="Ask anything"
-=======
-  images: ChatImage[];
-  onAddImages: (files: File[]) => void;
-  onRemoveImage: (id: string) => void;
-}) {
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const handleFiles = (fileList: FileList | null) => {
-    if (!fileList || fileList.length === 0) return;
-    onAddImages(Array.from(fileList));
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  };
-
-  return (
-    <div className="rounded-3xl border border-zinc-200 bg-white shadow-lg">
-      {images.length > 0 && (
-        <div className="flex flex-wrap gap-2 px-5 pt-4">
-          {images.map((image) => (
-            <div key={image.id} className="relative">
-              {image.kind === "pdf" ? (
-                <div className="flex h-16 w-16 items-center justify-center rounded-lg bg-pink-50">
-                  <FileText className="h-6 w-6 text-pink-500" />
-                </div>
-              ) : (
-                <Image
-                  src={image.dataUrl}
-                  alt={image.name}
-                  width={64}
-                  height={64}
-                  unoptimized
-                  className="h-16 w-16 rounded-lg object-cover"
-                />
-              )}
-              <button
-                type="button"
-                onClick={() => onRemoveImage(image.id)}
-                className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-zinc-800 text-white shadow"
-                aria-label="Remove file"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!disabled && (value.trim() || images.length > 0)) onSubmit();
-        }}
-        className="flex items-center gap-2 px-3 py-2.5"
-      >
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={disabled}
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-50"
-          aria-label="Attach image or PDF"
-        >
-          <ImagePlus className="h-5 w-5" />
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*,application/pdf,.pdf"
-          multiple
-          className="hidden"
-          onChange={(e) => handleFiles(e.target.files)}
-        />
-        <input
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder="Ask anything (attach image atau PDF untuk analisis)"
->>>>>>> f01baba (aingmaung)
           className="w-full bg-transparent text-sm text-zinc-800 outline-none placeholder:text-zinc-400"
         />
         <button
           type="submit"
-<<<<<<< HEAD
           disabled={disabled || !canSubmit}
-=======
-          disabled={disabled || (!value.trim() && images.length === 0)}
->>>>>>> f01baba (aingmaung)
           className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-black text-white transition-colors disabled:cursor-not-allowed disabled:opacity-40"
           aria-label="Send message"
         >
@@ -909,22 +813,36 @@ function SourceCard({ source }: { source: Source }) {
       <h4 className="text-sm font-bold leading-snug text-zinc-900">
         {source.title}
       </h4>
-      <div className="mt-3 space-y-1.5 text-xs text-zinc-600">
-        <p>
-          <span className="font-bold text-pink-500">Hakim:</span> {source.hakim}
+      {source.excerpt ? (
+        <p className="mt-3 line-clamp-5 text-xs leading-relaxed text-zinc-600">
+          {source.excerpt}
         </p>
-        <p>
-          <span className="font-bold text-pink-500">Hakim Anggota:</span>{" "}
-          {source.hakimAnggota}
-        </p>
-        <p className="text-zinc-500">
-          Ditetapkan {source.tanggalDitetapkan}, Dibacakan{" "}
-          {source.tanggalDibacakan}
-        </p>
-      </div>
-      <span className="mt-3 inline-block rounded-full bg-pink-100 px-3 py-1 text-[10px] font-semibold text-pink-600">
-        Tingkat: {source.tingkat}
-      </span>
+      ) : (
+        <div className="mt-3 space-y-1.5 text-xs text-zinc-600">
+          <p>
+            <span className="font-bold text-pink-500">Hakim:</span> {source.hakim}
+          </p>
+          <p>
+            <span className="font-bold text-pink-500">Hakim Anggota:</span>{" "}
+            {source.hakimAnggota}
+          </p>
+          <p className="text-zinc-500">
+            Ditetapkan {source.tanggalDitetapkan}, Dibacakan{" "}
+            {source.tanggalDibacakan}
+          </p>
+        </div>
+      )}
+      {source.tingkat ? (
+        <span className="mt-3 inline-block rounded-full bg-pink-100 px-3 py-1 text-[10px] font-semibold text-pink-600">
+          Tingkat: {source.tingkat}
+        </span>
+      ) : null}
+      {source.score !== undefined && (
+        <span className="mt-3 inline-block rounded-full bg-emerald-100 px-3 py-1 text-[10px] font-semibold text-emerald-700">
+          Skor relevansi: {source.score.toFixed(2)}
+          {source.reason ? ` · ${source.reason}` : ""}
+        </span>
+      )}
       <button className="mt-4 w-full rounded-xl bg-[#6B1B7A] py-2.5 text-sm font-semibold text-white transition-transform hover:scale-[1.02]">
         Ringkasan
       </button>
@@ -983,19 +901,12 @@ function SourcesSidebar({
 export default function ChatPage() {
   const [isSourcesSidebarOpen, setIsSourcesSidebarOpen] = useState(true);
   const [input, setInput] = useState("");
-<<<<<<< HEAD
   const [draftModel, setDraftModel] = useState<"sft" | "rag">("sft");
+  const [draftProvider, setDraftProvider] = useState<"local" | "deployed">(
+    "local"
+  );
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [toast, setToast] = useState<string | null>(null);
-=======
-  const [pendingImages, setPendingImages] = useState<ChatImage[]>([]);
-  const [providers, setProviders] = useState<ModelProvider[]>(FALLBACK_PROVIDERS);
-  const [provider, setProvider] = useState<Provider>(() => {
-    if (typeof window === "undefined") return FALLBACK_PROVIDERS[0]?.id ?? "wandb";
-    const stored = window.localStorage.getItem("sinergi-provider");
-    return stored || FALLBACK_PROVIDERS[0]?.id || "wandb";
-  });
->>>>>>> f01baba (aingmaung)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [filesModalSession, setFilesModalSession] = useState<ChatSession | null>(null);
@@ -1003,7 +914,6 @@ export default function ChatPage() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
-<<<<<<< HEAD
   const chatSessions = useChatStore((s) => s.chatSessions);
   const activeSessionId = useChatStore((s) => s.activeSessionId);
   const isLoading = useChatStore((s) => s.isLoading);
@@ -1016,72 +926,9 @@ export default function ChatPage() {
   const deleteChat = useChatStore((s) => s.deleteChat);
   const getSession = useChatStore((s) => s.getSession);
   const setSessionModel = useChatStore((s) => s.setSessionModel);
+  const setSessionProvider = useChatStore((s) => s.setSessionProvider);
   const appendUserMessage = useChatStore((s) => s.appendUserMessage);
   const upsertSessionMessage = useChatStore((s) => s.upsertSessionMessage);
-=======
-  useEffect(() => {
-    window.localStorage.setItem("sinergi-provider", provider);
-  }, [provider]);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`${CHAT_API_URL}/api/models`)
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
-      .then((payload: { default?: string; providers?: ModelProvider[] }) => {
-        if (cancelled || !payload?.providers?.length) return;
-        setProviders(payload.providers);
-        const stored = window.localStorage.getItem("sinergi-provider");
-        const available = payload.providers.map((p) => p.id);
-        const chosen =
-          stored && available.includes(stored)
-            ? stored
-            : payload.default && available.includes(payload.default)
-              ? payload.default
-              : payload.providers[0].id;
-        setProvider(chosen);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const handleProviderChange = (next: Provider) => {
-    setProvider(next);
-  };
-
-  const handleAddImages = (files: File[]) => {
-    const readers = files.map(
-      (file) =>
-        new Promise<ChatImage>((resolve, reject) => {
-          const kind: "image" | "pdf" =
-            file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")
-              ? "pdf"
-              : "image";
-          const reader = new FileReader();
-          reader.onload = () =>
-            resolve({
-              id: uid("img"),
-              name: file.name,
-              dataUrl: String(reader.result ?? ""),
-              kind,
-            });
-          reader.onerror = () => reject(reader.error);
-          reader.readAsDataURL(file);
-        })
-    );
-    Promise.all(readers)
-      .then((newImages) => setPendingImages((prev) => [...prev, ...newImages]))
-      .catch(() => undefined);
-  };
-
-  const handleRemoveImage = (id: string) => {
-    setPendingImages((prev) => prev.filter((img) => img.id !== id));
-  };
-
-  const activeSession = chatSessions.find((s) => s.id === activeSessionId) ?? null;
-  const activeMessages = activeSession ? activeSession.messages : messages;
->>>>>>> f01baba (aingmaung)
 
   const latestSources = useCallback(() => {
     if (!activeSession) return undefined;
@@ -1101,14 +948,12 @@ export default function ChatPage() {
   const handleSend = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
-      const images = pendingImages;
-      if ((!trimmed && images.length === 0) || isLoading) return;
+      if (!trimmed || isLoading) return;
 
       const userMessage: ChatMessage = {
         id: uid("user"),
         role: "user",
         content: trimmed,
-<<<<<<< HEAD
         ...(attachments.length > 0 ? { attachments } : {}),
       };
 
@@ -1116,36 +961,11 @@ export default function ChatPage() {
 
       if (!activeSessionId && sessionId) {
         setSessionModel(sessionId, draftModel);
-=======
-        images: images.length > 0 ? images : undefined,
-      };
-
-      let sessionId = activeSessionId;
-      if (!sessionId) {
-        sessionId = uid("session");
-        const newSession: ChatSession = {
-          id: sessionId,
-          title: truncateTitle(trimmed || images[0]?.name || "New chat"),
-          messages: [userMessage],
-          createdAt: new Date().toISOString(),
-        };
-        setChatSessions((prev) => [newSession, ...prev]);
-        setActiveSessionId(sessionId);
-      } else {
-        setChatSessions((prev) =>
-          prev.map((s) =>
-            s.id === sessionId ? { ...s, messages: [...s.messages, userMessage] } : s
-          )
-        );
->>>>>>> f01baba (aingmaung)
+        setSessionProvider(sessionId, draftProvider);
       }
 
       setInput("");
-<<<<<<< HEAD
       setAttachments([]);
-=======
-      setPendingImages([]);
->>>>>>> f01baba (aingmaung)
       setIsLoading(true);
 
       const loadingMsg: ChatMessage = {
@@ -1159,28 +979,32 @@ export default function ChatPage() {
         upsertSessionMessage(sessionId, loadingMsg);
       }
 
-      const conversation: ApiMessage[] = [
+      const conversation = [
         ...(activeSession?.messages ?? []),
         userMessage,
-      ].map(({ role, content, images: msgImages }) => ({
-        role,
-        content: buildMessageContent(content, msgImages ?? []),
-      }));
+      ].map(({ role, content }) => ({ role, content }));
+
+      const sendModel = activeSession?.model ?? draftModel;
+      const sendProvider = activeSession?.provider ?? draftProvider;
 
       try {
-<<<<<<< HEAD
-        const aiResponse = await requestAIResponse(conversation);
-        upsertSessionMessage(sessionId, aiResponse, { removeLoading: true });
-=======
-        const { message: aiResponse } = await requestAIResponse(conversation, provider);
-        setChatSessions((prev) =>
-          prev.map((s) => {
-            if (s.id !== sessionId) return s;
-            const withoutLoading = s.messages.filter((m) => m.id !== loadingMsg.id);
-            return { ...s, messages: [...withoutLoading, aiResponse] };
-          })
-        );
->>>>>>> f01baba (aingmaung)
+        if (sendModel === "rag" && attachments.length > 0) {
+          const { message: aiResponse, sources } = await requestRagResponse(
+            trimmed,
+            attachments,
+            conversation,
+            sendProvider
+          );
+          upsertSessionMessage(
+            sessionId,
+            { ...aiResponse, sources },
+            { removeLoading: true }
+          );
+        } else {
+          const provider = sendProvider === "deployed" ? "wandb" : "vllm";
+          const aiResponse = await requestAIResponse(conversation, provider);
+          upsertSessionMessage(sessionId, aiResponse, { removeLoading: true });
+        }
       } catch (error) {
         const detail = error instanceof Error ? error.message : "Unknown error";
         const errorResponse: ChatMessage = {
@@ -1193,7 +1017,6 @@ export default function ChatPage() {
         setIsLoading(false);
       }
     },
-<<<<<<< HEAD
     [
       activeSession,
       activeSessionId,
@@ -1203,11 +1026,10 @@ export default function ChatPage() {
       upsertSessionMessage,
       setIsLoading,
       draftModel,
+      draftProvider,
       setSessionModel,
+      setSessionProvider,
     ]
-=======
-    [activeSession, activeSessionId, isLoading, provider, pendingImages]
->>>>>>> f01baba (aingmaung)
   );
 
   const handlePickTemplate = (text: string) => {
@@ -1248,6 +1070,7 @@ export default function ChatPage() {
           fileName: file.name,
           fileSize: file.size,
           status: "uploading",
+          file,
         });
       }
 
@@ -1271,8 +1094,8 @@ export default function ChatPage() {
   const handleNewChat = () => {
     newSession();
     setDraftModel("sft");
+    setDraftProvider("local");
     setInput("");
-    setPendingImages([]);
   };
 
   const handleSelectSession = (id: string) => {
@@ -1291,7 +1114,23 @@ export default function ChatPage() {
       const systemMsg: ChatMessage = {
         id: uid("system"),
         role: "assistant",
-        content: `Model diganti ke ${model.toUpperCase()}`,
+        content: `Mode diganti ke ${model.toUpperCase()}`,
+      };
+      upsertSessionMessage(activeSessionId, systemMsg);
+    }
+  };
+
+  const handleProviderChange = (provider: "local" | "deployed") => {
+    setDraftProvider(provider);
+    if (activeSessionId && activeSession) {
+      if (activeSession.provider === provider) return;
+      setSessionProvider(activeSessionId, provider);
+      const label =
+        provider === "deployed" ? "Deployed (MiniMax M3)" : "Local (vLLM)";
+      const systemMsg: ChatMessage = {
+        id: uid("system"),
+        role: "assistant",
+        content: `Model diganti ke ${label}`,
       };
       upsertSessionMessage(activeSessionId, systemMsg);
     }
@@ -1299,18 +1138,8 @@ export default function ChatPage() {
 
   const handleDeleteChat = (id: string) => {
     if (!window.confirm("Hapus chat ini?")) return;
-<<<<<<< HEAD
     deleteChat(id);
     if (activeSessionId === id) setInput("");
-=======
-    setChatSessions((prev) => prev.filter((s) => s.id !== id));
-    if (activeSessionId === id) {
-      setActiveSessionId(null);
-      setMessages([]);
-      setInput("");
-      setPendingImages([]);
-    }
->>>>>>> f01baba (aingmaung)
   };
 
   const handleViewFiles = (id: string) => {
@@ -1394,36 +1223,22 @@ export default function ChatPage() {
           )}
         </div>
 
-<<<<<<< HEAD
         <div className="sticky bottom-0 mx-auto w-full max-w-3xl px-4 pb-5 sm:px-6">
           <div className="mb-2">
             <ContextUsageBar session={activeSession} />
           </div>
-=======
-        <div className="sticky bottom-0 mx-auto w-full max-w-3xl space-y-2 px-4 pb-5 sm:px-6">
-          <ProviderSwitch
-            providers={providers}
-            provider={provider}
-            onChange={handleProviderChange}
-            disabled={isLoading}
-          />
->>>>>>> f01baba (aingmaung)
           <ChatInput
             value={input}
             onChange={setInput}
             onSubmit={() => handleSend(input)}
             disabled={isLoading}
-<<<<<<< HEAD
             attachments={attachments}
             onAddFiles={handleAddFiles}
             onRemoveAttachment={handleRemoveAttachment}
             model={activeSession?.model ?? draftModel}
             onModelChange={handleModelChange}
-=======
-            images={pendingImages}
-            onAddImages={handleAddImages}
-            onRemoveImage={handleRemoveImage}
->>>>>>> f01baba (aingmaung)
+            provider={activeSession?.provider ?? draftProvider}
+            onProviderChange={handleProviderChange}
           />
         </div>
       </main>
