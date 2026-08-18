@@ -7,6 +7,7 @@ import {
   Plus,
   Library,
   FolderKanban,
+  History,
   ArrowUp,
   ChevronLeft,
   ChevronRight,
@@ -18,17 +19,25 @@ import {
   FileStack,
   Trash2,
   X,
+  FileText,
+  Check,
+  CircleX,
+  Upload,
+  AlertCircle,
+  ChevronDown,
+  Cpu,
 } from "lucide-react";
-import type { ChatMessage, ChatSession, Source } from "@/lib/types";
+import type {
+  Attachment,
+  ChatMessage,
+  ChatSession,
+  Source,
+} from "@/lib/types";
+import { useChatStore } from "@/lib/store/chat-store";
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
-
-function truncateTitle(text: string, max = 24): string {
-  const clean = text.trim();
-  return clean.length > max ? `${clean.slice(0, max)}...` : clean;
-}
 
 function uid(prefix: string): string {
   const cryptoObj =
@@ -37,6 +46,35 @@ function uid(prefix: string): string {
     ? cryptoObj.randomUUID()
     : Math.random().toString(36).slice(2) + Date.now().toString(36);
   return `${prefix}-${rand}`;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 ** 2) {
+    return `${(bytes / 1024 ** 2).toFixed(1).replace(".", ",")} MB`;
+  }
+  if (bytes >= 1024) {
+    return `${(bytes / 1024).toFixed(0).replace(".", ",")} KB`;
+  }
+  return `${bytes} B`;
+}
+
+const MAX_ATTACHMENTS = 5;
+const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024; // 10MB
+
+function estimateTokens(session: ChatSession | null): number {
+  if (!session) return 0;
+  const chars = session.messages.reduce(
+    (sum, m) => sum + (m.content?.length ?? 0),
+    0
+  );
+  return Math.round(chars / 4);
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1000) {
+    return `${(n / 1000).toFixed(1).replace(".", ",")}K`;
+  }
+  return `${n}`;
 }
 
 const CHAT_API_URL =
@@ -231,6 +269,13 @@ function Sidebar({
           {!isCollapsed && <span>Library</span>}
         </button>
         <button
+          onClick={() => router.push("/history")}
+          className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition-colors hover:bg-white/10"
+        >
+          <History className="h-5 w-5 shrink-0 text-pink-400" />
+          {!isCollapsed && <span>History</span>}
+        </button>
+        <button
           onClick={() => router.push("/project")}
           className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition-colors hover:bg-white/10"
         >
@@ -308,6 +353,25 @@ function MessageBubble({ message }: { message: ChatMessage }) {
     return (
       <div className="flex justify-end">
         <div className="max-w-[80%] rounded-2xl bg-[#F5A9F2] px-4 py-3 text-sm font-medium text-purple-900">
+          {message.attachments && message.attachments.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-2">
+              {message.attachments.map((attachment) => (
+                <span
+                  key={attachment.id}
+                  className="flex items-center gap-2 rounded-lg bg-white/70 px-3 py-1.5"
+                >
+                  <FileText className="h-4 w-4 shrink-0 text-red-500" />
+                  <span className="max-w-40 truncate">{attachment.fileName}</span>
+                  {attachment.status === "done" && (
+                    <Check className="h-4 w-4 shrink-0 text-green-600" />
+                  )}
+                  {attachment.status === "error" && (
+                    <CircleX className="h-4 w-4 shrink-0 text-red-600" />
+                  )}
+                </span>
+              ))}
+            </div>
+          )}
           {message.content}
         </div>
       </div>
@@ -377,41 +441,250 @@ function TemplateCard({ text, onPick }: { text: string; onPick: (t: string) => v
   );
 }
 
+function AttachmentChip({
+  attachment,
+  onRemove,
+}: {
+  attachment: Attachment;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-2">
+      <FileText className="h-5 w-5 shrink-0 text-red-500" />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="truncate text-sm font-medium text-zinc-800">
+            {attachment.fileName}
+          </span>
+          <span className="shrink-0 text-xs text-zinc-400">
+            {formatBytes(attachment.fileSize)}
+          </span>
+        </div>
+        {attachment.status === "uploading" && (
+          <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-zinc-200">
+            <div className="h-full w-1/2 animate-pulse rounded-full bg-purple-500" />
+          </div>
+        )}
+        {attachment.status === "error" && (
+          <div className="text-xs font-medium text-red-500">
+            Upload gagal
+          </div>
+        )}
+      </div>
+      {attachment.status === "done" ? (
+        <Check className="h-4 w-4 shrink-0 text-green-500" />
+      ) : attachment.status === "uploading" ? (
+        <Upload className="h-4 w-4 shrink-0 animate-pulse text-purple-500" />
+      ) : (
+        <CircleX className="h-4 w-4 shrink-0 text-red-500" />
+      )}
+      {attachment.status !== "uploading" && (
+        <button
+          onClick={onRemove}
+          className="shrink-0 rounded-md p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-600"
+          aria-label="Remove attachment"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ModelSelector({
+  value,
+  onChange,
+}: {
+  value: "sft" | "rag";
+  onChange: (m: "sft" | "rag") => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (open && menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [open]);
+
+  const options: { key: "sft" | "rag"; label: string; desc: string }[] = [
+    {
+      key: "sft",
+      label: "SFT",
+      desc: "Model fine-tuned, jawaban lebih cepat",
+    },
+    {
+      key: "rag",
+      label: "RAG",
+      desc: "Model dengan pencarian dokumen real-time, lebih akurat untuk kasus spesifik",
+    },
+  ];
+
+  const active = options.find((o) => o.key === value) ?? options[0];
+
+  return (
+    <div ref={menuRef} className="relative shrink-0">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1.5 rounded-full border border-zinc-200 px-3 py-1.5 text-xs font-semibold text-purple-800 transition-colors hover:bg-purple-50"
+        aria-label="Select model"
+      >
+        <Cpu className="h-3.5 w-3.5" />
+        {active.label}
+        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+
+      {open && (
+        <div className="absolute bottom-full left-0 z-50 mb-1.5 w-72 overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-zinc-100">
+          {options.map((option) => {
+            const isActive = option.key === value;
+            return (
+              <button
+                key={option.key}
+                onClick={() => {
+                  onChange(option.key);
+                  setOpen(false);
+                }}
+                className={`flex w-full items-start gap-2 px-4 py-3 text-left transition-colors hover:bg-gray-50 ${
+                  isActive ? "bg-pink-50" : ""
+                }`}
+              >
+                <Cpu className="mt-0.5 h-4 w-4 shrink-0 text-purple-700" />
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold text-zinc-900">
+                    {option.label}
+                    {isActive && (
+                      <span className="ml-2 rounded-full bg-pink-200 px-2 py-0.5 text-[10px] font-bold text-purple-800">
+                        Aktif
+                      </span>
+                    )}
+                  </span>
+                  <span className="mt-0.5 block text-xs leading-snug text-zinc-500">
+                    {option.desc}
+                  </span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ContextUsageBar({ session }: { session: ChatSession | null }) {
+  if (!session) return null;
+  const limit = session.contextLimit || 200_000;
+  const used = estimateTokens(session);
+  const pct = Math.min(100, (used / limit) * 100);
+  const barColor =
+    pct > 90 ? "bg-red-500" : pct >= 70 ? "bg-yellow-500" : "bg-green-500";
+
+  return (
+    <div className="group relative flex items-center justify-end gap-2">
+      <div className="flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 shadow-sm ring-1 ring-zinc-100">
+        <div className="h-1 w-24 overflow-hidden rounded-full bg-zinc-200">
+          <div
+            className={`h-full rounded-full transition-all ${barColor}`}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+        <span className="text-[11px] font-medium text-zinc-500">
+          {formatTokens(used)} / {formatTokens(limit)} tokens ({Math.round(pct)}%)
+        </span>
+      </div>
+      <span className="pointer-events-none absolute right-0 top-full z-10 mt-1 hidden whitespace-nowrap rounded-lg bg-zinc-900 px-2.5 py-1.5 text-[11px] text-white shadow-lg group-hover:block">
+        Semakin dekat limit, riwayat chat lama mungkin akan dipotong otomatis.
+      </span>
+    </div>
+  );
+}
+
 function ChatInput({
   value,
   onChange,
   onSubmit,
   disabled,
+  attachments,
+  onAddFiles,
+  onRemoveAttachment,
+  model,
+  onModelChange,
 }: {
   value: string;
   onChange: (v: string) => void;
   onSubmit: () => void;
   disabled: boolean;
+  attachments: Attachment[];
+  onAddFiles: (files: FileList | null) => void;
+  onRemoveAttachment: (id: string) => void;
+  model: "sft" | "rag";
+  onModelChange: (m: "sft" | "rag") => void;
 }) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const canSubmit = value.trim().length > 0 || attachments.length > 0;
+
   return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (!disabled && value.trim()) onSubmit();
-      }}
-      className="flex items-center gap-3 rounded-full border border-zinc-200 bg-white px-5 py-2.5 shadow-lg"
-    >
-      <Plus className="h-5 w-5 shrink-0 text-zinc-400" />
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="Ask anything"
-        className="w-full bg-transparent text-sm text-zinc-800 outline-none placeholder:text-zinc-400"
-      />
-      <button
-        type="submit"
-        disabled={disabled || !value.trim()}
-        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-black text-white transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-        aria-label="Send message"
+    <div className="rounded-3xl border border-zinc-200 bg-white p-3 shadow-lg">
+      {attachments.length > 0 && (
+        <div className="mb-3 flex flex-wrap gap-2">
+          {attachments.map((attachment) => (
+            <AttachmentChip
+              key={attachment.id}
+              attachment={attachment}
+              onRemove={() => onRemoveAttachment(attachment.id)}
+            />
+          ))}
+        </div>
+      )}
+
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!disabled && canSubmit) onSubmit();
+        }}
+        className="flex items-center gap-3 px-2"
       >
-        <ArrowUp className="h-5 w-5" />
-      </button>
-    </form>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf"
+          multiple
+          hidden
+          onChange={(e) => {
+            onAddFiles(e.target.files);
+            e.target.value = "";
+          }}
+        />
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          className="rounded-full p-1.5 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700"
+          aria-label="Attach PDF files"
+        >
+          <Plus className="h-5 w-5" />
+        </button>
+        <ModelSelector value={model} onChange={onModelChange} />
+        <input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="Ask anything"
+          className="w-full bg-transparent text-sm text-zinc-800 outline-none placeholder:text-zinc-400"
+        />
+        <button
+          type="submit"
+          disabled={disabled || !canSubmit}
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-black text-white transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label="Send message"
+        >
+          <ArrowUp className="h-5 w-5" />
+        </button>
+      </form>
+    </div>
   );
 }
 
@@ -493,20 +766,32 @@ function SourcesSidebar({
 /* ------------------------------------------------------------------ */
 
 export default function ChatPage() {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isSourcesSidebarOpen, setIsSourcesSidebarOpen] = useState(true);
-  const [isLoading, setIsLoading] = useState(false);
   const [input, setInput] = useState("");
+  const [draftModel, setDraftModel] = useState<"sft" | "rag">("sft");
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [toast, setToast] = useState<string | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [filesModalSession, setFilesModalSession] = useState<ChatSession | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const activeSession = chatSessions.find((s) => s.id === activeSessionId) ?? null;
-  const activeMessages = activeSession ? activeSession.messages : messages;
+  const chatSessions = useChatStore((s) => s.chatSessions);
+  const activeSessionId = useChatStore((s) => s.activeSessionId);
+  const isLoading = useChatStore((s) => s.isLoading);
+  const activeSession = useChatStore((s) => s.activeSession());
+  const activeMessages = useChatStore((s) => s.activeMessages());
+  const setIsLoading = useChatStore((s) => s.setIsLoading);
+  const newSession = useChatStore((s) => s.newSession);
+  const selectSession = useChatStore((s) => s.selectSession);
+  const togglePin = useChatStore((s) => s.togglePin);
+  const deleteChat = useChatStore((s) => s.deleteChat);
+  const getSession = useChatStore((s) => s.getSession);
+  const setSessionModel = useChatStore((s) => s.setSessionModel);
+  const appendUserMessage = useChatStore((s) => s.appendUserMessage);
+  const upsertSessionMessage = useChatStore((s) => s.upsertSessionMessage);
 
   const latestSources = useCallback(() => {
     if (!activeSession) return undefined;
@@ -532,29 +817,17 @@ export default function ChatPage() {
         id: uid("user"),
         role: "user",
         content: trimmed,
+        ...(attachments.length > 0 ? { attachments } : {}),
       };
 
-      let sessionId = activeSessionId;
-      if (!sessionId) {
-        sessionId = uid("session");
-        const newSession: ChatSession = {
-          id: sessionId,
-          title: truncateTitle(trimmed),
-          messages: [userMessage],
-          createdAt: new Date().toISOString(),
-        };
-        setChatSessions((prev) => [newSession, ...prev]);
-        setActiveSessionId(sessionId);
-      } else {
-        setChatSessions((prev) =>
-          prev.map((s) =>
-            s.id === sessionId ? { ...s, messages: [...s.messages, userMessage] } : s
-          )
-        );
+      const sessionId = appendUserMessage(activeSessionId, userMessage);
+
+      if (!activeSessionId && sessionId) {
+        setSessionModel(sessionId, draftModel);
       }
 
-      setMessages([]);
       setInput("");
+      setAttachments([]);
       setIsLoading(true);
 
       const loadingMsg: ChatMessage = {
@@ -565,11 +838,7 @@ export default function ChatPage() {
       };
 
       if (sessionId) {
-        setChatSessions((prev) =>
-          prev.map((s) =>
-            s.id === sessionId ? { ...s, messages: [...s.messages, loadingMsg] } : s
-          )
-        );
+        upsertSessionMessage(sessionId, loadingMsg);
       }
 
       const conversation = [
@@ -579,13 +848,7 @@ export default function ChatPage() {
 
       try {
         const aiResponse = await requestAIResponse(conversation);
-        setChatSessions((prev) =>
-          prev.map((s) => {
-            if (s.id !== sessionId) return s;
-            const withoutLoading = s.messages.filter((m) => m.id !== loadingMsg.id);
-            return { ...s, messages: [...withoutLoading, aiResponse] };
-          })
-        );
+        upsertSessionMessage(sessionId, aiResponse, { removeLoading: true });
       } catch (error) {
         const detail = error instanceof Error ? error.message : "Unknown error";
         const errorResponse: ChatMessage = {
@@ -593,18 +856,22 @@ export default function ChatPage() {
           role: "assistant",
           content: `Tidak dapat menghubungi model: ${detail}`,
         };
-        setChatSessions((prev) =>
-          prev.map((s) => {
-            if (s.id !== sessionId) return s;
-            const withoutLoading = s.messages.filter((m) => m.id !== loadingMsg.id);
-            return { ...s, messages: [...withoutLoading, errorResponse] };
-          })
-        );
+        upsertSessionMessage(sessionId, errorResponse, { removeLoading: true });
       } finally {
         setIsLoading(false);
       }
     },
-    [activeSession, activeSessionId, isLoading]
+    [
+      activeSession,
+      activeSessionId,
+      isLoading,
+      attachments,
+      appendUserMessage,
+      upsertSessionMessage,
+      setIsLoading,
+      draftModel,
+      setSessionModel,
+    ]
   );
 
   const handlePickTemplate = (text: string) => {
@@ -612,37 +879,95 @@ export default function ChatPage() {
     handleSend(text);
   };
 
+  const showToast = (msg: string) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast(msg);
+    toastTimer.current = setTimeout(() => setToast(null), 3000);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+    };
+  }, []);
+
+  const handleAddFiles = (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+
+    setAttachments((prev) => {
+      const next = [...prev];
+      const added: Attachment[] = [];
+
+      for (const file of Array.from(fileList)) {
+        if (next.length + added.length >= MAX_ATTACHMENTS) {
+          showToast(`Maksimal ${MAX_ATTACHMENTS} file per pesan.`);
+          break;
+        }
+        if (file.size > MAX_ATTACHMENT_SIZE) {
+          showToast(`"${file.name}" melebihi batas 10MB.`);
+          continue;
+        }
+        added.push({
+          id: uid("att"),
+          fileName: file.name,
+          fileSize: file.size,
+          status: "uploading",
+        });
+      }
+
+      return [...next, ...added];
+    });
+
+    // Simulasi progress upload
+    setTimeout(() => {
+      setAttachments((prev) =>
+        prev.map((att) =>
+          att.status === "uploading" ? { ...att, status: "done" as const } : att
+        )
+      );
+    }, 1200);
+  };
+
+  const handleRemoveAttachment = (id: string) => {
+    setAttachments((prev) => prev.filter((att) => att.id !== id));
+  };
+
   const handleNewChat = () => {
-    setActiveSessionId(null);
-    setMessages([]);
+    newSession();
+    setDraftModel("sft");
     setInput("");
   };
 
   const handleSelectSession = (id: string) => {
-    setActiveSessionId(id);
+    selectSession(id);
   };
 
   const handleTogglePin = (id: string) => {
-    setChatSessions((prev) =>
-      prev.map((s) =>
-        s.id === id ? { ...s, isPinned: !s.isPinned } : s
-      )
-    );
+    togglePin(id);
+  };
+
+  const handleModelChange = (model: "sft" | "rag") => {
+    setDraftModel(model);
+    if (activeSessionId && activeSession) {
+      if (activeSession.model === model) return;
+      setSessionModel(activeSessionId, model);
+      const systemMsg: ChatMessage = {
+        id: uid("system"),
+        role: "assistant",
+        content: `Model diganti ke ${model.toUpperCase()}`,
+      };
+      upsertSessionMessage(activeSessionId, systemMsg);
+    }
   };
 
   const handleDeleteChat = (id: string) => {
     if (!window.confirm("Hapus chat ini?")) return;
-    setChatSessions((prev) => prev.filter((s) => s.id !== id));
-    if (activeSessionId === id) {
-      setActiveSessionId(null);
-      setMessages([]);
-      setInput("");
-    }
+    deleteChat(id);
+    if (activeSessionId === id) setInput("");
   };
 
   const handleViewFiles = (id: string) => {
-    const session = chatSessions.find((s) => s.id === id) ?? null;
-    setFilesModalSession(session);
+    setFilesModalSession(getSession(id));
   };
 
   return (
@@ -667,6 +992,23 @@ export default function ChatPage() {
 
       {/* Center chat area */}
       <main className="flex min-w-0 flex-1 flex-col">
+        {activeSession && (
+          <div className="flex items-center justify-between border-b border-zinc-200 bg-white/60 px-4 py-2.5 sm:px-8">
+            <span className="truncate text-sm font-semibold text-zinc-800">
+              {activeSession.title}
+            </span>
+            <span
+              className={`ml-3 inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
+                activeSession.model === "rag"
+                  ? "bg-purple-100 text-purple-700"
+                  : "bg-zinc-100 text-zinc-600"
+              }`}
+            >
+              <Cpu className="h-3 w-3" />
+              {(activeSession.model ?? "sft").toUpperCase()}
+            </span>
+          </div>
+        )}
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-6 sm:px-8">
           {activeMessages.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center gap-8">
@@ -706,11 +1048,19 @@ export default function ChatPage() {
         </div>
 
         <div className="sticky bottom-0 mx-auto w-full max-w-3xl px-4 pb-5 sm:px-6">
+          <div className="mb-2">
+            <ContextUsageBar session={activeSession} />
+          </div>
           <ChatInput
             value={input}
             onChange={setInput}
             onSubmit={() => handleSend(input)}
             disabled={isLoading}
+            attachments={attachments}
+            onAddFiles={handleAddFiles}
+            onRemoveAttachment={handleRemoveAttachment}
+            model={activeSession?.model ?? draftModel}
+            onModelChange={handleModelChange}
           />
         </div>
       </main>
@@ -764,6 +1114,13 @@ export default function ChatPage() {
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-full bg-zinc-900 px-5 py-2.5 text-sm font-medium text-white shadow-lg">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          {toast}
         </div>
       )}
     </div>

@@ -8,12 +8,21 @@ export interface Source {
   tingkat: string;
 }
 
+export interface Attachment {
+  id: string;
+  fileName: string;
+  fileSize: number;
+  url?: string; // terisi setelah upload sukses
+  status: "uploading" | "done" | "error";
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
   sources?: Source[]; // hanya ada jika AI mereferensikan putusan
   isLoading?: boolean;
+  attachments?: Attachment[];
 }
 
 export interface ChatSession {
@@ -22,6 +31,8 @@ export interface ChatSession {
   messages: ChatMessage[];
   createdAt: string;
   isPinned?: boolean;
+  model?: "sft" | "rag"; // model yang dipakai untuk sesi ini
+  contextLimit: number; // token limit sesuai model
   projectId?: string;
   files?: { name: string; url: string }[]; // untuk fitur "View files in chat"
 }

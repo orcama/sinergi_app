@@ -3,11 +3,11 @@
 import Image from "next/image";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent } from "react";
 import {
   Library,
   Plus,
   FolderKanban,
+  History,
   PanelLeftClose,
   PanelLeftOpen,
   ArrowLeft,
@@ -18,7 +18,6 @@ import {
   FileText,
   FileImage,
   File,
-  X,
 } from "lucide-react";
 import type { LibraryFile } from "@/lib/types";
 
@@ -174,6 +173,13 @@ function Sidebar({
           {!isCollapsed && <span>Library</span>}
         </button>
         <button
+          onClick={() => router.push("/history")}
+          className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition-colors hover:bg-white/10"
+        >
+          <History className="h-5 w-5 shrink-0 text-pink-400" />
+          {!isCollapsed && <span>History</span>}
+        </button>
+        <button
           onClick={() => router.push("/project")}
           className="flex items-center gap-3 rounded-xl bg-pink-300 px-3 py-2.5 text-left text-sm font-semibold text-purple-900 transition-colors"
         >
@@ -306,14 +312,6 @@ function ProjectHeader({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(project.name);
   const [menuOpen, setMenuOpen] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (editing) {
-      setDraft(project.name);
-      inputRef.current?.focus();
-    }
-  }, [editing, project.name]);
 
   const commit = () => {
     setEditing(false);
@@ -321,7 +319,10 @@ function ProjectHeader({
     if (trimmed && trimmed !== project.name) onRename(trimmed);
   };
 
-  const startEditing = () => setEditing(true);
+  const startEditing = () => {
+    setDraft(project.name);
+    setEditing(true);
+  };
 
   return (
     <div className="flex items-center gap-3">
@@ -337,7 +338,7 @@ function ProjectHeader({
       </div>
       {editing ? (
         <input
-          ref={inputRef}
+          ref={(el) => el?.focus()}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commit}

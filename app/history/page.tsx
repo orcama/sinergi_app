@@ -8,45 +8,21 @@ import {
   Plus,
   FolderKanban,
   History,
+  Pin,
   PanelLeftClose,
   PanelLeftOpen,
   Search,
   Trash2,
-  FileText,
-  FileImage,
-  File,
+  MessageSquare,
+  Cpu,
+  Sparkles,
 } from "lucide-react";
-
-/* ------------------------------------------------------------------ */
-/* Types                                                               */
-/* ------------------------------------------------------------------ */
-
-interface LibraryFile {
-  id: string;
-  name: string;
-  type: "image" | "document";
-  extension: string; // "docx", "pdf", "img", dll
-  modifiedAt: string; // ISO date string
-  sizeInBytes: number;
-  chatId?: string; // referensi ke chat asal file ini dikirim
-}
+import { useChatStore } from "@/lib/store/chat-store";
+import type { ChatSession } from "@/lib/types";
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
-
-function formatFileSize(bytes: number): string {
-  if (bytes >= 1024 ** 3) {
-    return `${(bytes / 1024 ** 3).toFixed(2).replace(".", ",")} GB`;
-  }
-  if (bytes >= 1024 ** 2) {
-    return `${(bytes / 1024 ** 2).toFixed(0).replace(".", ",")} MB`;
-  }
-  if (bytes >= 1024) {
-    return `${(bytes / 1024).toFixed(0).replace(".", ",")} KB`;
-  }
-  return `${bytes} B`;
-}
 
 function formatDate(isoString: string): string {
   return new Date(isoString).toLocaleDateString("en-US", {
@@ -55,72 +31,42 @@ function formatDate(isoString: string): string {
   });
 }
 
-/* ------------------------------------------------------------------ */
-/* Mock data                                                           */
-/* ------------------------------------------------------------------ */
+function lastMessagePreview(session: ChatSession): string {
+  const last = [...session.messages]
+    .reverse()
+    .find((m) => !m.isLoading && m.content.trim().length > 0);
+  if (!last) return "Belum ada pesan";
+  const text = last.content.replace(/\s+/g, " ").trim();
+  return text.length > 80 ? `${text.slice(0, 80)}...` : text;
+}
 
-const MOCK_FILES: LibraryFile[] = [
-  {
-    id: "f1",
-    name: "Putusan_Tipikor_2026.pdf",
-    type: "document",
-    extension: "pdf",
-    modifiedAt: "2026-08-07T09:30:00.000Z",
-    sizeInBytes: 2_400_000_000,
-    chatId: "s1",
-  },
-  {
-    id: "f2",
-    name: "SK_KPN_2026.docx",
-    type: "document",
-    extension: "docx",
-    modifiedAt: "2026-08-01T14:20:00.000Z",
-    sizeInBytes: 243_000_000,
-    chatId: "s1",
-  },
-  {
-    id: "f3",
-    name: "Dokumen_Sidang.png",
-    type: "image",
-    extension: "png",
-    modifiedAt: "2026-07-28T11:05:00.000Z",
-    sizeInBytes: 190_000,
-    chatId: "s2",
-  },
-  {
-    id: "f4",
-    name: "Laporan_Analisis.docx",
-    type: "document",
-    extension: "docx",
-    modifiedAt: "2026-07-15T16:45:00.000Z",
-    sizeInBytes: 243_000_000,
-    chatId: "s3",
-  },
-  {
-    id: "f5",
-    name: "Bukti_Foto.img",
-    type: "image",
-    extension: "img",
-    modifiedAt: "2026-06-30T08:10:00.000Z",
-    sizeInBytes: 5_000_000,
-    chatId: "s2",
-  },
-  {
-    id: "f6",
-    name: "Permohonan_Banding.docx",
-    type: "document",
-    extension: "docx",
-    modifiedAt: "2026-06-12T10:00:00.000Z",
-    sizeInBytes: 190_000,
-    chatId: "s4",
-  },
-];
+function isToday(iso: string): boolean {
+  const d = new Date(iso);
+  const now = new Date();
+  return (
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
+  );
+}
+
+function isWithinLast7Days(iso: string): boolean {
+  const d = new Date(iso).getTime();
+  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  return d >= weekAgo;
+}
 
 /* ------------------------------------------------------------------ */
-/* Sub-components                                                      */
+/* Sidebar                                                             */
 /* ------------------------------------------------------------------ */
 
-function Sidebar({ isCollapsed, onToggleCollapse }: { isCollapsed: boolean; onToggleCollapse: () => void }) {
+function Sidebar({
+  isCollapsed,
+  onToggleCollapse,
+}: {
+  isCollapsed: boolean;
+  onToggleCollapse: () => void;
+}) {
   const router = useRouter();
   return (
     <aside
@@ -162,16 +108,16 @@ function Sidebar({ isCollapsed, onToggleCollapse }: { isCollapsed: boolean; onTo
         </button>
         <button
           onClick={() => router.push("/library")}
-          className="flex items-center gap-3 rounded-xl bg-pink-300 px-3 py-2.5 text-left text-sm font-semibold text-purple-900 transition-colors"
+          className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition-colors hover:bg-white/10"
         >
-          <Library className="h-5 w-5 shrink-0 text-purple-900" />
+          <Library className="h-5 w-5 shrink-0 text-pink-400" />
           {!isCollapsed && <span>Library</span>}
         </button>
         <button
           onClick={() => router.push("/history")}
-          className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition-colors hover:bg-white/10"
+          className="flex items-center gap-3 rounded-xl bg-pink-300 px-3 py-2.5 text-left text-sm font-semibold text-purple-900 transition-colors"
         >
-          <History className="h-5 w-5 shrink-0 text-pink-400" />
+          <History className="h-5 w-5 shrink-0 text-purple-900" />
           {!isCollapsed && <span>History</span>}
         </button>
         <button
@@ -183,7 +129,7 @@ function Sidebar({ isCollapsed, onToggleCollapse }: { isCollapsed: boolean; onTo
         </button>
       </div>
 
-      <div className="flex items-center gap-3 border-t border-white/10 px-4 py-4 mt-auto">
+      <div className="mt-auto flex items-center gap-3 border-t border-white/10 px-4 py-4">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-pink-400 text-sm font-bold text-[#1A1625]">
           {!isCollapsed ? "AD" : "A"}
         </div>
@@ -203,7 +149,13 @@ function Sidebar({ isCollapsed, onToggleCollapse }: { isCollapsed: boolean; onTo
   );
 }
 
-function LibrarySearchBar({
+/* ------------------------------------------------------------------ */
+/* Sub-components                                                      */
+/* ------------------------------------------------------------------ */
+
+type Filter = "all" | "pinned" | "today" | "week";
+
+function HistorySearchBar({
   value,
   onChange,
 }: {
@@ -223,20 +175,21 @@ function LibrarySearchBar({
   );
 }
 
-function LibraryFilterTabs({
+function HistoryFilterTabs({
   active,
   onChange,
 }: {
-  active: "all" | "images" | "documents";
-  onChange: (v: "all" | "images" | "documents") => void;
+  active: Filter;
+  onChange: (f: Filter) => void;
 }) {
-  const tabs: { key: "all" | "images" | "documents"; label: string }[] = [
+  const tabs: { key: Filter; label: string }[] = [
     { key: "all", label: "All" },
-    { key: "images", label: "Images" },
-    { key: "documents", label: "Documents" },
+    { key: "pinned", label: "Pinned" },
+    { key: "today", label: "Today" },
+    { key: "week", label: "Last 7 days" },
   ];
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex flex-wrap items-center gap-3">
       {tabs.map((tab) => {
         const isActive = tab.key === active;
         return (
@@ -257,55 +210,77 @@ function LibraryFilterTabs({
   );
 }
 
-function LibraryTableRow({
-  file,
+function ModelBadge({ model }: { model?: "sft" | "rag" }) {
+  const value = model ?? "sft";
+  const isRag = value === "rag";
+  const label = value.toUpperCase();
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
+        isRag ? "bg-purple-100 text-purple-700" : "bg-zinc-100 text-zinc-600"
+      }`}
+    >
+      {isRag ? (
+        <Sparkles className="h-3 w-3" />
+      ) : (
+        <Cpu className="h-3 w-3" />
+      )}
+      {label}
+    </span>
+  );
+}
+
+function HistoryTableRow({
+  session,
   selected,
   onToggle,
   onDelete,
+  onOpen,
 }: {
-  file: LibraryFile;
+  session: ChatSession;
   selected: boolean;
   onToggle: () => void;
   onDelete: () => void;
+  onOpen: () => void;
 }) {
   return (
     <div
-      className={`group flex items-center gap-3 rounded-xl px-3 py-3 transition-colors hover:bg-gray-50 ${
+      className={`group flex cursor-pointer items-center gap-3 rounded-xl px-3 py-3 transition-colors hover:bg-gray-50 ${
         selected ? "bg-pink-50" : ""
       }`}
+      onClick={onOpen}
     >
       <input
         type="checkbox"
         checked={selected}
+        onClick={(e) => e.stopPropagation()}
         onChange={onToggle}
         className="h-4 w-4 shrink-0 accent-pink-500"
-        aria-label={`Select ${file.name}`}
+        aria-label={`Select ${session.title}`}
       />
-      <div className="flex min-w-0 flex-1 items-center gap-3">
-        {file.type === "image" ? (
-          <FileImage className="h-5 w-5 shrink-0 text-zinc-400" />
-        ) : (
-          <FileText className="h-5 w-5 shrink-0 text-zinc-400" />
-        )}
-        <div className="min-w-0">
-          <div className="truncate text-sm font-medium text-zinc-800">
-            {file.name}
-          </div>
-          <div className="text-xs text-zinc-400 sm:hidden">
-            {formatDate(file.modifiedAt)} · {formatFileSize(file.sizeInBytes)}
-          </div>
-        </div>
+      <div className="flex min-w-0 flex-1 items-center gap-2">
+        {session.isPinned && <Pin className="h-4 w-4 shrink-0 text-pink-500" />}
+        <MessageSquare className="h-4 w-4 shrink-0 text-zinc-400" />
+        <span className="truncate text-sm font-medium text-zinc-800">
+          {session.title}
+        </span>
       </div>
-      <div className="hidden w-28 shrink-0 text-sm text-zinc-500 sm:block">
-        {formatDate(file.modifiedAt)}
+      <div className="hidden w-16 shrink-0 sm:block">
+        <ModelBadge model={session.model} />
+      </div>
+      <div className="hidden min-w-0 flex-1 truncate pl-4 text-sm text-zinc-500 md:block">
+        {lastMessagePreview(session)}
       </div>
       <div className="hidden w-24 shrink-0 text-right text-sm text-zinc-500 sm:block">
-        {formatFileSize(file.sizeInBytes)}
+        {formatDate(session.createdAt)}
       </div>
       <button
-        onClick={onDelete}
+        onClick={(e) => {
+          e.stopPropagation();
+          onDelete();
+        }}
         className="shrink-0 rounded-md p-1.5 text-red-500 transition-colors hover:bg-red-50"
-        aria-label={`Delete ${file.name}`}
+        aria-label={`Delete ${session.title}`}
       >
         <Trash2 className="h-4 w-4" />
       </button>
@@ -313,29 +288,31 @@ function LibraryTableRow({
   );
 }
 
-function LibraryTable({
-  files,
+function HistoryTable({
+  sessions,
   selectedIds,
   onToggle,
   onToggleAll,
   onDelete,
+  onOpen,
 }: {
-  files: LibraryFile[];
+  sessions: ChatSession[];
   selectedIds: Set<string>;
   onToggle: (id: string) => void;
   onToggleAll: () => void;
   onDelete: (id: string) => void;
+  onOpen: (id: string) => void;
 }) {
-  if (files.length === 0) {
+  if (sessions.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center gap-3 py-20 text-zinc-400">
-        <File className="h-10 w-10" />
-        <p className="text-sm">Tidak ada file ditemukan</p>
+        <History className="h-10 w-10" />
+        <p className="text-sm">Tidak ada riwayat chat ditemukan</p>
       </div>
     );
   }
 
-  const allSelected = files.length > 0 && files.every((f) => selectedIds.has(f.id));
+  const allSelected = sessions.every((s) => selectedIds.has(s.id));
 
   return (
     <div>
@@ -345,28 +322,32 @@ function LibraryTable({
           checked={allSelected}
           onChange={onToggleAll}
           className="h-4 w-4 shrink-0 accent-pink-500"
-          aria-label="Select all files"
+          aria-label="Select all chats"
         />
-        <div className="flex min-w-0 flex-1 items-center gap-3 text-sm font-medium text-zinc-400">
-          <span>Name</span>
+        <div className="flex min-w-0 flex-1 items-center text-sm font-medium text-zinc-400">
+          <span>Title</span>
         </div>
-        <div className="hidden w-28 shrink-0 text-sm font-medium text-zinc-400 sm:block">
-          Modified
+        <div className="hidden w-16 shrink-0 text-sm font-medium text-zinc-400 sm:block">
+          Model
+        </div>
+        <div className="hidden min-w-0 flex-1 pl-4 text-sm font-medium text-zinc-400 md:block">
+          Last message
         </div>
         <div className="hidden w-24 shrink-0 text-right text-sm font-medium text-zinc-400 sm:block">
-          Size
+          Modified
         </div>
         <div className="w-8 shrink-0" />
       </div>
 
       <div className="flex flex-col">
-        {files.map((file) => (
-          <LibraryTableRow
-            key={file.id}
-            file={file}
-            selected={selectedIds.has(file.id)}
-            onToggle={() => onToggle(file.id)}
-            onDelete={() => onDelete(file.id)}
+        {sessions.map((session) => (
+          <HistoryTableRow
+            key={session.id}
+            session={session}
+            selected={selectedIds.has(session.id)}
+            onToggle={() => onToggle(session.id)}
+            onDelete={() => onDelete(session.id)}
+            onOpen={() => onOpen(session.id)}
           />
         ))}
       </div>
@@ -374,26 +355,38 @@ function LibraryTable({
   );
 }
 
-function LibraryPage() {
+function HistoryPage() {
+  const router = useRouter();
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [activeFilter, setActiveFilter] = useState<"all" | "images" | "documents">("all");
+  const [activeFilter, setActiveFilter] = useState<Filter>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [files, setFiles] = useState<LibraryFile[]>(MOCK_FILES);
 
-  const filteredFiles = useMemo(() => {
+  const chatSessions = useChatStore((s) => s.chatSessions);
+  const deleteChat = useChatStore((s) => s.deleteChat);
+
+  const filteredSessions = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return files.filter((file) => {
-      const matchesFilter =
-        activeFilter === "all" ||
-        (activeFilter === "images" && file.type === "image") ||
-        (activeFilter === "documents" && file.type === "document");
-      const matchesSearch = !q || file.name.toLowerCase().includes(q);
-      return matchesFilter && matchesSearch;
-    });
-  }, [files, activeFilter, searchQuery]);
+    return [...chatSessions]
+      .sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      )
+      .filter((session) => {
+        const matchesFilter =
+          activeFilter === "all" ||
+          (activeFilter === "pinned" && session.isPinned) ||
+          (activeFilter === "today" && isToday(session.createdAt)) ||
+          (activeFilter === "week" && isWithinLast7Days(session.createdAt));
+        const matchesSearch = !q || session.title.toLowerCase().includes(q);
+        return matchesFilter && matchesSearch;
+      });
+  }, [chatSessions, activeFilter, searchQuery]);
 
-  const visibleIds = useMemo(() => new Set(filteredFiles.map((f) => f.id)), [filteredFiles]);
+  const visibleIds = useMemo(
+    () => new Set(filteredSessions.map((s) => s.id)),
+    [filteredSessions]
+  );
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
@@ -406,7 +399,8 @@ function LibraryPage() {
 
   const toggleSelectAll = () => {
     setSelectedIds((prev) => {
-      const allSelected = visibleIds.size > 0 && [...visibleIds].every((id) => prev.has(id));
+      const allSelected =
+        visibleIds.size > 0 && [...visibleIds].every((id) => prev.has(id));
       const next = new Set(prev);
       if (allSelected) {
         visibleIds.forEach((id) => next.delete(id));
@@ -418,8 +412,8 @@ function LibraryPage() {
   };
 
   const handleDelete = (id: string) => {
-    if (!window.confirm("Hapus file ini?")) return;
-    setFiles((prev) => prev.filter((f) => f.id !== id));
+    if (!window.confirm("Hapus chat ini?")) return;
+    deleteChat(id);
     setSelectedIds((prev) => {
       const next = new Set(prev);
       next.delete(id);
@@ -427,11 +421,8 @@ function LibraryPage() {
     });
   };
 
-  const handleBulkDelete = () => {
-    if (selectedIds.size === 0) return;
-    if (!window.confirm(`Hapus ${selectedIds.size} file terpilih?`)) return;
-    setFiles((prev) => prev.filter((f) => !selectedIds.has(f.id)));
-    setSelectedIds(new Set());
+  const handleOpen = (id: string) => {
+    router.push(`/chat?sessionId=${id}`);
   };
 
   const selectedCount = selectedIds.size;
@@ -444,21 +435,28 @@ function LibraryPage() {
       />
 
       <main className="flex min-w-0 flex-1 flex-col overflow-y-auto">
-        <div className="mx-auto w-full max-w-4xl px-4 py-8 sm:px-8">
+        <div className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-8">
           <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
-            <h1 className="text-3xl font-bold text-zinc-900">Library</h1>
-            <LibrarySearchBar value={searchQuery} onChange={setSearchQuery} />
+            <h1 className="text-3xl font-bold text-zinc-900">History</h1>
+            <div className="w-full sm:w-64">
+              <HistorySearchBar value={searchQuery} onChange={setSearchQuery} />
+            </div>
           </div>
 
           <div className="mt-6 flex flex-wrap items-center gap-3">
-            <LibraryFilterTabs active={activeFilter} onChange={setActiveFilter} />
+            <HistoryFilterTabs active={activeFilter} onChange={setActiveFilter} />
             {selectedCount > 0 && (
               <div className="ml-auto flex items-center gap-3 rounded-full bg-white px-4 py-1.5 shadow-sm">
                 <span className="text-sm font-medium text-zinc-600">
-                  {selectedCount} file dipilih
+                  {selectedCount} chat dipilih
                 </span>
                 <button
-                  onClick={handleBulkDelete}
+                  onClick={() => {
+                    if (!window.confirm(`Hapus ${selectedCount} chat terpilih?`))
+                      return;
+                    selectedIds.forEach(deleteChat);
+                    setSelectedIds(new Set());
+                  }}
                   className="flex items-center gap-1.5 rounded-full bg-red-500 px-3 py-1 text-xs font-semibold text-white transition-colors hover:bg-red-600"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -469,12 +467,13 @@ function LibraryPage() {
           </div>
 
           <div className="mt-6 rounded-2xl bg-white p-3 shadow-sm">
-            <LibraryTable
-              files={filteredFiles}
+            <HistoryTable
+              sessions={filteredSessions}
               selectedIds={selectedIds}
               onToggle={toggleSelect}
               onToggleAll={toggleSelectAll}
               onDelete={handleDelete}
+              onOpen={handleOpen}
             />
           </div>
         </div>
@@ -483,4 +482,4 @@ function LibraryPage() {
   );
 }
 
-export default LibraryPage;
+export default HistoryPage;

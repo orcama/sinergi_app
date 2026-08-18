@@ -9,6 +9,7 @@ import {
   Plus,
   FolderKanban,
   FolderOpen,
+  History,
   PanelLeftClose,
   PanelLeftOpen,
   Search,
@@ -115,6 +116,13 @@ function Sidebar({
         >
           <Library className="h-5 w-5 shrink-0 text-pink-400" />
           {!isCollapsed && <span>Library</span>}
+        </button>
+        <button
+          onClick={() => router.push("/history")}
+          className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition-colors hover:bg-white/10"
+        >
+          <History className="h-5 w-5 shrink-0 text-pink-400" />
+          {!isCollapsed && <span>History</span>}
         </button>
         <button
           onClick={() => router.push("/project")}
