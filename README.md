@@ -49,6 +49,29 @@ Open `http://localhost:3000/chat`. Gateway health is available at
 `http://127.0.0.1:8001/health`, and its OpenAPI docs are at
 `http://127.0.0.1:8001/docs`.
 
+### Model providers: configurable via env
+
+The chat page has a switch between model providers, populated dynamically from
+the backend's `GET /api/models` endpoint. The provider list itself is defined
+by environment variables (`MODEL_PROVIDERS` JSON, `MODEL_ID`, `WANDB_MODEL_ID`,
+etc.) — see `backend/.env.example` and `backend/DOCUMENTATION.md`. Change the
+env file and restart the backend to alter the models without touching code.
+
+Defaults:
+
+- **vLLM (Local)** — `mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-4bit` on the
+  Mac mini. Text only.
+- **MiniMax M3 (WandB)** — `MiniMaxAI/MiniMax-M3`, a hosted multimodal model
+  (text + image). See `backend/models.md`. Works on any platform, including
+  Windows.
+
+On Windows, vLLM Metal cannot run, so use the **MiniMax M3** provider. The
+`WANDB_API_KEY` is read from `backend/models.md` (git-ignored) or the
+`WANDB_API_KEY` environment variable. The chat input accepts images and PDFs
+(hybrid — both can be attached in one message); images go to the multimodal
+model as `image_url` parts, and PDF text is extracted server-side with `pypdf`
+and sent as plain text.
+
 ## Getting Started
 
 First, run the development server:
