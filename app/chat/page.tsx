@@ -26,6 +26,7 @@ import {
   AlertCircle,
   ChevronDown,
   Cpu,
+  Paperclip,
 } from "lucide-react";
 import type {
   Attachment,
@@ -593,10 +594,10 @@ function MessageBubble({
 }
 
 const TEMPLATES = [
-  "Jelaskan isi Putusan Nomor 1/Pid.Sus/2026/PN.KPN secara singkat",
-  "Apa saja unsur tindak pidana perdagangan orang (TPPO)?",
-  "Bagaimana alur sidang perkara tindak pidana korupsi (Tipikor)?",
-  "Rangkum pertimbangan hakim dalam putusan pidana terbaru",
+  "Ekstrak bagian amar putusan dari dokumen ini",
+  "Ekstrak bagian penangkapan dari dokumen ini",
+  "Ekstrak bagian identitas terdakwa dari dokumen ini",
+  "Ekstrak bagian tuntutan jaksa dari dokumen ini",
 ];
 
 function TemplateCard({ text, onPick }: { text: string; onPick: (t: string) => void }) {
@@ -715,46 +716,64 @@ function ModelSwitch({
   value: "local" | "deployed";
   onChange: (m: "local" | "deployed") => void;
 }) {
-  const models: { key: "local" | "deployed"; label: string; desc: string }[] = [
-    {
-      key: "local",
-      label: "Local",
-      desc: "vLLM · 128K",
-    },
-    {
-      key: "deployed",
-      label: "Deployed",
-      desc: "MiniMax M3 · 262K",
-    },
+  const options: { key: "local" | "deployed"; label: string }[] = [
+    { key: "local", label: "Local" },
+    { key: "deployed", label: "Deployed" },
   ];
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [indicator, setIndicator] = useState({ width: 0, offset: 0 });
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const update = () => {
+      const buttons = Array.from(
+        container.querySelectorAll<HTMLButtonElement>("[data-switch-option]")
+      );
+      const active = buttons.find((b) => b.dataset.switchValue === value);
+      const target = active ?? buttons[0];
+      if (!target) return;
+      const containerRect = container.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      setIndicator({
+        width: targetRect.width,
+        offset: targetRect.left - containerRect.left,
+      });
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(container);
+    window.addEventListener("resize", update);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", update);
+    };
+  }, [value]);
 
   return (
-    <div className="flex shrink-0 items-center gap-1 rounded-full border border-zinc-200 bg-zinc-50 p-1">
-      {models.map((model) => {
-        const active = model.key === value;
+    <div
+      ref={containerRef}
+      className="relative w-fit shrink-0 rounded-full bg-zinc-200 p-1"
+    >
+      <span
+        aria-hidden
+        className="absolute top-1 bottom-1 rounded-full bg-zinc-900 shadow transition-[left,width] duration-200 ease-out"
+        style={{ left: indicator.offset, width: indicator.width }}
+      />
+      {options.map((option) => {
+        const active = option.key === value;
         return (
           <button
-            key={model.key}
-            onClick={() => onChange(model.key)}
-            className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
-              active
-                ? "bg-black text-white shadow"
-                : "text-zinc-500 hover:bg-zinc-100"
+            key={option.key}
+            data-switch-option
+            data-switch-value={option.key}
+            onClick={() => onChange(option.key)}
+            className={`relative z-10 whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-semibold transition-colors ${
+              active ? "text-white" : "text-zinc-500 hover:text-zinc-700"
             }`}
             aria-pressed={active}
           >
-            <span
-              className={`relative inline-flex h-3.5 w-6 items-center rounded-full transition-colors ${
-                active ? "bg-pink-500" : "bg-zinc-300"
-              }`}
-            >
-              <span
-                className={`inline-block h-2.5 w-2.5 rounded-full bg-white transition-transform ${
-                  active ? "translate-x-3" : "translate-x-0.5"
-                }`}
-              />
-            </span>
-            <span>{model.label}</span>
+            {option.label}
           </button>
         );
       })}
@@ -811,7 +830,7 @@ function ModelSelector({
 
       {open && (
         <div className="absolute bottom-full left-0 z-50 mb-1.5 w-72 overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-zinc-100">
-          {options.map((option) => {
+          {options.map((option, i) => {
             const isActive = option.key === value;
             return (
               <button
@@ -821,16 +840,24 @@ function ModelSelector({
                   setOpen(false);
                 }}
                 className={`flex w-full items-start gap-2 px-4 py-3 text-left transition-colors hover:bg-gray-50 ${
-                  isActive ? "bg-pink-50" : ""
+                  i > 0 ? "border-t border-zinc-100" : ""
                 }`}
               >
-                <Cpu className="mt-0.5 h-4 w-4 shrink-0 text-purple-700" />
-                <span className="min-w-0">
-                  <span className="block text-sm font-semibold text-zinc-900">
-                    {option.label}
+                <span
+                  className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
+                    isActive ? "bg-purple-700 text-white" : "bg-zinc-100 text-zinc-400"
+                  }`}
+                >
+                  <Cpu className="h-4 w-4" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-semibold text-zinc-900">
+                      {option.label}
+                    </span>
                     {isActive && (
-                      <span className="ml-2 rounded-full bg-pink-200 px-2 py-0.5 text-[10px] font-bold text-purple-800">
-                        Aktif
+                      <span className="rounded-full bg-purple-700 px-2 py-0.5 text-[10px] font-bold text-white">
+                        AKTIF
                       </span>
                     )}
                   </span>
@@ -886,8 +913,6 @@ function ChatInput({
   onPreviewAttachment,
   model,
   onModelChange,
-  provider,
-  onProviderChange,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -899,8 +924,6 @@ function ChatInput({
   onPreviewAttachment: (attachment: Attachment) => void;
   model: "sft" | "rag";
   onModelChange: (m: "sft" | "rag") => void;
-  provider: "local" | "deployed";
-  onProviderChange: (p: "local" | "deployed") => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canSubmit = value.trim().length > 0 || attachments.length > 0;
@@ -941,23 +964,27 @@ function ChatInput({
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          className="rounded-full p-1.5 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700"
-          aria-label="Attach PDF files"
+          className="group relative rounded-full p-1.5 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700"
+          aria-label="Lampirkan dokumen"
         >
-          <Plus className="h-5 w-5" />
+          <Paperclip className="h-5 w-5" />
+          <span className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1.5 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-zinc-900 px-2 py-1 text-[11px] text-white shadow group-hover:block">
+            Lampirkan dokumen
+          </span>
         </button>
         <ModelSelector value={model} onChange={onModelChange} />
-        <ModelSwitch value={provider} onChange={onProviderChange} />
         <input
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          placeholder="Ask anything"
+          placeholder="Tanyakan tentang putusan, pasal, atau kasus..."
           className="w-full bg-transparent text-sm text-zinc-800 outline-none placeholder:text-zinc-400"
         />
         <button
           type="submit"
           disabled={disabled || !canSubmit}
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-black text-white transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-white transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+            value.trim().length > 0 ? "bg-[#7C3AED]" : "bg-zinc-400"
+          }`}
           aria-label="Send message"
         >
           <ArrowUp className="h-5 w-5" />
@@ -1409,7 +1436,11 @@ if (pending.length === 0) return;
         </div>
 
         <div className="sticky bottom-0 mx-auto w-full max-w-3xl px-4 pb-5 sm:px-6">
-          <div className="mb-2">
+          <div className="mb-2 flex items-center justify-between gap-3 px-1">
+            <ModelSwitch
+              value={activeSession?.provider ?? draftProvider}
+              onChange={handleProviderChange}
+            />
             <ContextUsageBar session={activeSession} />
           </div>
           <ChatInput
@@ -1423,9 +1454,22 @@ if (pending.length === 0) return;
             onPreviewAttachment={setPreviewAttachment}
             model={activeSession?.model ?? draftModel}
             onModelChange={handleModelChange}
-            provider={activeSession?.provider ?? draftProvider}
-            onProviderChange={handleProviderChange}
           />
+          <div className="mt-2 flex items-center justify-center gap-1.5 text-[11px] text-zinc-500">
+            <Sparkles className="h-3 w-3 text-purple-500" />
+            <span>
+              Mode{" "}
+              <span className="font-semibold text-zinc-600">
+                {(activeSession?.provider ?? draftProvider) === "local"
+                  ? "Local"
+                  : "Deployed"}
+              </span>{" "}
+              aktif · Model{" "}
+              <span className="font-semibold text-zinc-600">
+                {(activeSession?.model ?? draftModel).toUpperCase()}
+              </span>
+            </span>
+          </div>
         </div>
       </main>
 
