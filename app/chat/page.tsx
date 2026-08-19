@@ -819,6 +819,7 @@ function ModelSelector({
   return (
     <div ref={menuRef} className="relative shrink-0">
       <button
+        type="button"
         onClick={() => setOpen((v) => !v)}
         className="flex items-center gap-1.5 rounded-full border border-zinc-200 px-3 py-1.5 text-xs font-semibold text-purple-800 transition-colors hover:bg-purple-50"
         aria-label="Select model mode"
@@ -835,6 +836,7 @@ function ModelSelector({
             return (
               <button
                 key={option.key}
+                type="button"
                 onClick={() => {
                   onChange(option.key);
                   setOpen(false);

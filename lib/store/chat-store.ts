@@ -15,13 +15,6 @@ function truncateTitle(text: string, max = 24): string {
   return clean.length > max ? `${clean.slice(0, max)}...` : clean;
 }
 
-function daysAgo(n: number, hour = 10): string {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  d.setHours(hour, 0, 0, 0);
-  return d.toISOString();
-}
-
 const MODEL_CONTEXT_LIMIT: Record<string, number> = {
   "local-sft": 32_000,
   "local-rag": 128_000,
@@ -38,115 +31,6 @@ function contextLimitFor(
     MODEL_CONTEXT_LIMIT["local-sft"]
   );
 }
-
-const SEED_SESSIONS: ChatSession[] = [
-  {
-    id: "seed-1",
-    title: "Jelaskan isi Putusan Nomor 1/Pid.Sus/2026/PN.KPN secara singkat",
-    model: "rag",
-    provider: "local",
-    contextLimit: contextLimitFor("local", "rag"),
-    isPinned: true,
-    createdAt: daysAgo(0),
-    messages: [
-      {
-        id: "m1",
-        role: "user",
-        content: "Jelaskan isi Putusan Nomor 1/Pid.Sus/2026/PN.KPN secara singkat",
-      },
-      {
-        id: "m2",
-        role: "assistant",
-        content:
-          "Putusan ini merupakan perkara pidana yang telah diputus oleh Pengadilan Negeri Kupang. Majelis hakim menilai berdasarkan alat bukti dan keterangan para saksi yang diajukan di persidangan.",
-      },
-    ],
-  },
-  {
-    id: "seed-2",
-    title: "Apa saja unsur tindak pidana perdagangan orang (TPPO)?",
-    model: "sft",
-    provider: "deployed",
-    contextLimit: contextLimitFor("deployed", "sft"),
-    createdAt: daysAgo(1),
-    messages: [
-      {
-        id: "m3",
-        role: "user",
-        content: "Apa saja unsur tindak pidana perdagangan orang (TPPO)?",
-      },
-      {
-        id: "m4",
-        role: "assistant",
-        content:
-          "TPPO diatur dalam Undang-Undang Nomor 21 Tahun 2007. Unsur-unsurnya meliputi perekrutan, pengangkutan, penampungan, pengiriman, atau penerimaan seseorang dengan cara kekerasan, penipuan, atau penyalahgunaan kekuasaan.",
-      },
-    ],
-  },
-  {
-    id: "seed-3",
-    title: "Bagaimana alur sidang perkara tindak pidana korupsi (Tipikor)?",
-    model: "sft",
-    provider: "deployed",
-    contextLimit: contextLimitFor("deployed", "sft"),
-    createdAt: daysAgo(3),
-    messages: [
-      {
-        id: "m5",
-        role: "user",
-        content: "Bagaimana alur sidang perkara tindak pidana korupsi (Tipikor)?",
-      },
-      {
-        id: "m6",
-        role: "assistant",
-        content:
-          "Alur sidang Tipikor dimulai dari tahap pembacaan dakwaan, eksepsi, tanggapan, pembuktian, hingga pembacaan putusan.",
-      },
-    ],
-  },
-  {
-    id: "seed-4",
-    title: "Rangkum pertimbangan hakim dalam putusan pidana terbaru",
-    model: "rag",
-    provider: "local",
-    contextLimit: contextLimitFor("local", "rag"),
-    createdAt: daysAgo(6),
-    messages: [
-      {
-        id: "m7",
-        role: "user",
-        content: "Rangkum pertimbangan hakim dalam putusan pidana terbaru",
-      },
-      {
-        id: "m8",
-        role: "assistant",
-        content:
-          "Pertimbangan hakim meliputi kualifikasi perbuatan, kesesuaian alat bukti, serta hal yang memberatkan dan meringankan terdakwa.",
-      },
-    ],
-  },
-  {
-    id: "seed-5",
-    title: "Unsur-unsur tindak pidana penggelapan (Pasal 372 KUHP)",
-    model: "sft",
-    provider: "deployed",
-    contextLimit: contextLimitFor("deployed", "sft"),
-    createdAt: daysAgo(12),
-    messages: [
-      {
-        id: "m9",
-        role: "user",
-        content: "Unsur-unsur tindak pidana penggelapan (Pasal 372 KUHP)",
-      },
-      {
-        id: "m10",
-        role: "assistant",
-        content:
-          "Penggelapan diatur dalam Pasal 372 KUHP, dengan unsur memiliki barang milik orang lain secara melawan hukum.",
-      },
-    ],
-  },
-];
 
 interface ChatState {
   chatSessions: ChatSession[];
@@ -183,7 +67,7 @@ interface ChatState {
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
-  chatSessions: SEED_SESSIONS,
+  chatSessions: [],
   activeSessionId: null,
   messages: [],
   isLoading: false,
