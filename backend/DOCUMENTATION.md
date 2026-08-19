@@ -131,8 +131,8 @@ Run the two backend processes in separate terminals.
 ```bash
 source ~/.venv-vllm-metal/bin/activate
 
-vllm serve mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-4bit \
-  --served-model-name mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-4bit \
+vllm serve Legal-verse/gemma-4-e2b-merged-mlx-4bit \
+  --served-model-name Legal-verse/gemma-4-e2b-merged-mlx-4bit \
   --host 127.0.0.1 \
   --port 8000 \
   --max-model-len 4096 \
