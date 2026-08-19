@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import {
   Mail,
   Lock,
@@ -11,6 +11,7 @@ import {
   EyeOff,
   type LucideIcon,
 } from "lucide-react";
+import { useAuth, translateFirebaseError } from "@/lib/auth-context";
 
 function InputField({
   icon: Icon,
@@ -80,16 +81,47 @@ export default function Home() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
 
+  const { login, loginGoogle, register, user, loading } = useAuth();
   const router = useRouter();
 
-  const handleSubmit = (e: FormEvent) => {
+  useEffect(() => {
+    if (!loading && user) {
+      router.replace("/chat");
+    }
+  }, [loading, user, router]);
+
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    const data = isSignUp
-      ? { name, email, password }
-      : { email, password };
-    console.log(isSignUp ? "Create account" : "Sign in", data);
-    router.push("/chat");
+    setError("");
+    setAuthLoading(true);
+    try {
+      if (isSignUp) {
+        await register(email, password);
+      } else {
+        await login(email, password);
+      }
+      router.push("/chat");
+    } catch (err) {
+      setError(translateFirebaseError(err));
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleGoogle = async () => {
+    setError("");
+    setAuthLoading(true);
+    try {
+      await loginGoogle();
+      router.push("/chat");
+    } catch (err) {
+      setError(translateFirebaseError(err));
+    } finally {
+      setAuthLoading(false);
+    }
   };
 
   return (
@@ -102,6 +134,7 @@ export default function Home() {
             width={120}
             height={80}
             className="h-12 w-auto"
+            style={{ width: "auto", height: "3rem" }}
             priority
           />
         </div>
@@ -120,6 +153,11 @@ export default function Home() {
             onSubmit={handleSubmit}
             className="flex w-full max-w-sm flex-col gap-4"
           >
+            {error && !isSignUp && (
+              <p className="rounded-xl bg-red-50 px-4 py-2.5 text-center text-sm font-medium text-red-600">
+                {error}
+              </p>
+            )}
             <div className="flex flex-col gap-2">
               <label className="text-sm font-semibold text-zinc-700">
                 Email Address
@@ -155,9 +193,10 @@ export default function Home() {
 
             <button
               type="submit"
-              className="mt-2 rounded-xl bg-purple-700 py-3 font-bold text-white transition-transform hover:scale-[1.02]"
+              disabled={authLoading}
+              className="mt-2 rounded-xl bg-purple-700 py-3 font-bold text-white transition-transform hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Sign in
+              {authLoading && !isSignUp ? "Signing in..." : "Sign in"}
             </button>
           </form>
 
@@ -169,10 +208,12 @@ export default function Home() {
             </div>
             <button
               type="button"
-              className="flex w-full items-center justify-center gap-2 rounded-full border border-zinc-200 bg-white py-2.5 text-sm font-semibold text-zinc-700 transition-colors hover:bg-zinc-50"
+              disabled={authLoading}
+              onClick={handleGoogle}
+              className="flex w-full items-center justify-center gap-2 rounded-full border border-zinc-200 bg-white py-2.5 text-sm font-semibold text-zinc-700 transition-colors hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <GoogleIcon />
-              Sign in with Google
+              {authLoading ? "Signing in..." : "Sign in with Google"}
             </button>
           </div>
         </div>
@@ -193,6 +234,11 @@ export default function Home() {
             onSubmit={handleSubmit}
             className="flex w-full max-w-sm flex-col gap-4"
           >
+            {error && isSignUp && (
+              <p className="rounded-xl bg-red-50 px-4 py-2.5 text-center text-sm font-medium text-red-600">
+                {error}
+              </p>
+            )}
             <div className="flex flex-col gap-2">
               <label className="text-sm font-semibold text-zinc-700">
                 Full Name
@@ -233,9 +279,10 @@ export default function Home() {
 
             <button
               type="submit"
-              className="mt-2 rounded-xl bg-purple-700 py-3 font-bold text-white transition-transform hover:scale-[1.02]"
+              disabled={authLoading}
+              className="mt-2 rounded-xl bg-purple-700 py-3 font-bold text-white transition-transform hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Create account
+              {authLoading && isSignUp ? "Creating..." : "Create account"}
             </button>
           </form>
         </div>
@@ -253,7 +300,8 @@ export default function Home() {
               </p>
               <button
                 onClick={() => setIsSignUp(false)}
-                className="mt-2 rounded-xl bg-purple-700 px-8 py-3 font-bold text-white transition-transform hover:scale-[1.02]"
+                disabled={authLoading}
+                className="mt-2 rounded-xl bg-purple-700 px-8 py-3 font-bold text-white transition-transform hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Back to sign in
               </button>
@@ -267,7 +315,8 @@ export default function Home() {
               </p>
               <button
                 onClick={() => setIsSignUp(true)}
-                className="mt-2 rounded-xl bg-purple-700 px-8 py-3 font-bold text-white transition-transform hover:scale-[1.02]"
+                disabled={authLoading}
+                className="mt-2 rounded-xl bg-purple-700 px-8 py-3 font-bold text-white transition-transform hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Create account
               </button>

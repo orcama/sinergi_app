@@ -5,9 +5,10 @@ description = "FastAPI gateway for the local vLLM Metal chat model"
 requires-python = ">=3.12,<3.14"
 dependencies = [
   "fastapi[standard]>=0.133.0,<0.137",
+  "firebase-admin>=7.5.0",
   "httpx>=0.28.1,<0.29",
   "pypdf>=6.16.1",
-  "pymupdf>=1.25",
+  "python-dotenv>=1.2.3",
 ]
 
 [dependency-groups]

@@ -6,6 +6,7 @@ import os
 
 import httpx
 import pytest
+from unittest import mock
 
 from app.main import (
     DEFAULT_MODEL,
@@ -105,6 +106,32 @@ async def test_chat_proxies_conversation_and_adds_system_prompt() -> None:
 
 
 @pytest.mark.asyncio
+async def test_auth_sync_creates_user_profile() -> None:
+    fake_user = {"uid": "uid-123", "email": "user@example.com", "name": "Alice"}
+    fake_user_ref = mock.Mock()
+    fake_user_ref.set.return_value = None
+    fake_db = mock.Mock()
+    fake_db.collection.return_value.document.return_value = fake_user_ref
+
+    with (
+        mock.patch("app.core.auth.firebase_auth.verify_id_token", return_value=fake_user),
+        mock.patch("app.main.db", fake_db),
+    ):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/auth/sync",
+                headers={"Authorization": "Bearer fake-token"},
+            )
+
+    assert response.status_code == 200
+    assert response.json() == {"uid": "uid-123", "email": "user@example.com"}
+    fake_db.collection.assert_called_once_with("users")
+    fake_user_ref.set.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_chat_reports_model_server_connection_failure() -> None:
     async def unavailable(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("offline", request=request)
@@ -152,16 +179,17 @@ async def test_wandb_provider_forward_multimodal_messages() -> None:
         )
 
     app.state.http = httpx.AsyncClient(transport=httpx.MockTransport(wandb_handler))
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        response = await client.post(
-            "/api/chat",
-            json={
-                "provider": "wandb",
-                "messages": [MULTIMODAL_USER],
-            },
-        )
+    with mock.patch.dict("os.environ", {"WANDB_API_KEY": "test-key"}, clear=False):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/chat",
+                json={
+                    "provider": "wandb",
+                    "messages": [MULTIMODAL_USER],
+                },
+            )
     await app.state.http.aclose()
 
     assert response.status_code == 200
@@ -299,24 +327,25 @@ async def test_wandb_provider_extracts_pdf_content() -> None:
         )
 
     app.state.http = httpx.AsyncClient(transport=httpx.MockTransport(wandb_handler))
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        response = await client.post(
-            "/api/chat",
-            json={
-                "provider": "wandb",
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "pdf", "name": "dokumen.pdf", "data": pdf},
-                            {"type": "text", "text": "Ringkas dokumen ini."},
-                        ],
-                    }
-                ],
-            },
-        )
+    with mock.patch.dict("os.environ", {"WANDB_API_KEY": "test-key"}, clear=False):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/chat",
+                json={
+                    "provider": "wandb",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "pdf", "name": "dokumen.pdf", "data": pdf},
+                                {"type": "text", "text": "Ringkas dokumen ini."},
+                            ],
+                        }
+                    ],
+                },
+            )
     await app.state.http.aclose()
 
     assert response.status_code == 200
@@ -382,40 +411,6 @@ LEGAL_PDF_TEXT = (
     "BERDASARKAN KETUHANAN YANG MAHA ESA\nM E N G A D I L I:\n"
     "1. Menyatakan Terdakwa bersalah melakukan tindak pidana penggelapan;"
 )
-
-
-@pytest.mark.asyncio
-async def test_pdf_extract_endpoint_returns_text() -> None:
-    pdf = make_test_pdf("Putusan Nomor 123/Pid.B/2026/PN.JKT")
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        response = await client.post(
-            "/api/pdf/extract",
-            json={"name": "putusan.pdf", "data": pdf},
-        )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["name"] == "putusan.pdf"
-    assert "Putusan Nomor 123/Pid.B/2026/PN.JKT" in payload["text"]
-    assert payload["char_count"] > 0
-
-
-@pytest.mark.asyncio
-async def test_pdf_extract_endpoint_reports_empty_pdf() -> None:
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        response = await client.post(
-            "/api/pdf/extract",
-            json={"name": "blank.pdf", "data": "not-a-real-pdf"},
-        )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["text"] == ""
-    assert payload["char_count"] == 0
 
 
 @pytest.mark.asyncio

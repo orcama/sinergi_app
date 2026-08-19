@@ -18,6 +18,8 @@ import {
   Lightbulb,
   X,
 } from "lucide-react";
+import { AuthGuard } from "@/lib/components/auth/AuthGuard";
+import { useAuth } from "@/lib/auth-context";
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -72,6 +74,13 @@ function Sidebar({
   onToggleCollapse: () => void;
 }) {
   const router = useRouter();
+  const { user, logout, loading } = useAuth();
+  const handleLogout = async () => {
+    await logout();
+    router.push("/");
+  };
+  const displayName = user?.displayName ?? user?.email ?? "User";
+  const initials = (displayName.charAt(0) ?? "U").toUpperCase();
   return (
     <aside
       className={`flex h-full shrink-0 flex-col bg-[#1A1625] text-white transition-[width] duration-300 ${
@@ -87,6 +96,7 @@ function Sidebar({
             height={40}
             priority
             className="h-9 w-auto"
+            style={{ width: "auto", height: "2.25rem" }}
           />
         )}
         <button
@@ -134,17 +144,31 @@ function Sidebar({
       </div>
 
       <div className="mt-auto flex items-center gap-3 border-t border-white/10 px-4 py-4">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-pink-400 text-sm font-bold text-[#1A1625]">
-          {!isCollapsed ? "AD" : "A"}
-        </div>
+        {user?.photoURL ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={user.photoURL}
+            alt="Profile"
+            referrerPolicy="no-referrer"
+            className="h-9 w-9 shrink-0 rounded-full object-cover"
+          />
+        ) : (
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-pink-400 text-sm font-bold text-[#1A1625]">
+            {!isCollapsed ? initials : "A"}
+          </div>
+        )}
         {!isCollapsed && (
           <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-semibold">Ahmad Developer</div>
+            <div className="truncate text-sm font-semibold">{displayName}</div>
+            <div className="mt-0.5 truncate text-[10px] text-white/50">
+              {user?.email}
+            </div>
             <button
-              onClick={() => router.push("/")}
-              className="mt-0.5 inline-block rounded-full bg-white/10 px-3 py-0.5 text-[10px] font-semibold text-white/70 transition-colors hover:bg-white/20 hover:text-white"
+              onClick={handleLogout}
+              disabled={loading}
+              className="mt-0.5 inline-block rounded-full bg-white/10 px-3 py-0.5 text-[10px] font-semibold text-white/70 transition-colors hover:bg-white/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Log out
+              {loading ? "Logging out..." : "Log out"}
             </button>
           </div>
         )}
@@ -482,6 +506,7 @@ function ProjectPage() {
   };
 
   return (
+    <AuthGuard>
     <div className="flex h-screen w-full overflow-hidden bg-[#F5F5F7]">
       <Sidebar
         isCollapsed={isSidebarCollapsed}
@@ -532,6 +557,7 @@ function ProjectPage() {
         onCreate={handleCreateProject}
       />
     </div>
+    </AuthGuard>
   );
 }
 

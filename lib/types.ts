@@ -1,4 +1,16 @@
-﻿export interface Source {
+export interface AuthenticatedUser {
+  uid: string;
+  email: string | null;
+  name: string | null;
+  photoURL: string | null;
+}
+
+export interface UploadedFile {
+  file_id: string;
+  url: string;
+}
+
+export interface Source {
   id: string;
   title: string;
   hakim: string;
