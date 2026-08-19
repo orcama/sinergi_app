@@ -145,6 +145,7 @@ Later executions reuse the cached model.
 ### Terminal 2: start FastAPI
 
 From the repository root:
+a
 
 ```bash
 cd backend
