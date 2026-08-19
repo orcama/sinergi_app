@@ -7,6 +7,7 @@ dependencies = [
   "fastapi[standard]>=0.133.0,<0.137",
   "httpx>=0.28.1,<0.29",
   "pypdf>=6.16.1",
+  "pymupdf>=1.25",
 ]
 
 [dependency-groups]

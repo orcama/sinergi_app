@@ -34,7 +34,13 @@ import type {
   Source,
 } from "@/lib/types";
 import { useChatStore } from "@/lib/store/chat-store";
-import { hitsToContext, ingestPdf, queryRag, type RagHit } from "@/lib/rag";
+import {
+  extractPdfText,
+  hitsToContext,
+  ingestPdf,
+  queryRag,
+  type RagHit,
+} from "@/lib/rag";
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -81,21 +87,67 @@ function formatTokens(n: number): string {
 const CHAT_API_URL =
   process.env.NEXT_PUBLIC_CHAT_API_URL ?? "http://127.0.0.1:8001";
 
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error(`Gagal membaca file ${file.name}`));
+    reader.readAsDataURL(file);
+  });
+}
+
+type ChatContentPart =
+  | { type: "text"; text: string }
+  | { type: "pdf"; name: string; data: string };
+
+type ChatPayloadMessage = {
+  role: "user" | "assistant";
+  content: string | ChatContentPart[];
+};
+
 async function requestAIResponse(
   messages: Pick<ChatMessage, "role" | "content">[],
   provider: "vllm" | "wandb",
-  context?: string
+  context?: string,
+  attachments?: Attachment[]
 ): Promise<ChatMessage> {
-  const body = context
-    ? {
-        provider,
-        messages: messages.map((m, i) =>
-          i === messages.length - 1 && m.role === "user"
-            ? { ...m, content: `${m.content}\n\n[Konteks dokumen]\n${context}` }
-            : m
-        ),
+  let lastUserIndex = -1;
+  messages.forEach((m, i) => {
+    if (m.role === "user") lastUserIndex = i;
+  });
+
+  let bodyMessages: ChatPayloadMessage[] = messages;
+
+  if (attachments && attachments.length > 0 && lastUserIndex >= 0) {
+    const parts: ChatContentPart[] = [];
+    if (context) {
+      parts.push({ type: "text", text: `[Konteks dokumen]\n${context}` });
+    }
+    for (const attachment of attachments) {
+      if (attachment.file) {
+        parts.push({
+          type: "pdf",
+          name: attachment.fileName,
+          data: await fileToDataUrl(attachment.file),
+        });
       }
-    : { provider, messages };
+    }
+    const last = messages[lastUserIndex];
+    if (last.content.trim()) {
+      parts.push({ type: "text", text: last.content });
+    }
+    bodyMessages = messages.map((m, i) =>
+      i === lastUserIndex ? { ...m, content: parts } : m
+    );
+  } else if (context) {
+    bodyMessages = messages.map((m, i) =>
+      i === lastUserIndex && m.role === "user"
+        ? { ...m, content: `${m.content}\n\n[Konteks dokumen]\n${context}` }
+        : m
+    );
+  }
+
+  const body = { provider, messages: bodyMessages };
 
   const response = await fetch(`${CHAT_API_URL}/api/chat`, {
     method: "POST",
@@ -154,10 +206,21 @@ async function requestRagResponse(
   const context = hitsToContext(hits);
   const sources = hitsToSources(hits);
 
+  const fallbackText = attachments
+    .map((attachment) => attachment.extractedText?.trim() ?? "")
+    .filter(Boolean)
+    .join("\n\n")
+    .slice(0, 32_000);
+
   const message = await requestAIResponse(
     conversation,
     provider === "deployed" ? "wandb" : "vllm",
-    context || (ingestedNames.length ? `Dokumen: ${ingestedNames.join(", ")}` : undefined)
+    context ||
+      (fallbackText
+        ? `[Teks dokumen]\n${fallbackText}`
+        : ingestedNames.length
+          ? `Dokumen: ${ingestedNames.join(", ")}`
+          : undefined)
   );
 
   return { message, sources };
@@ -408,28 +471,53 @@ function Sidebar({
   );
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
+function MessageBubble({
+  message,
+  onPreviewAttachment,
+}: {
+  message: ChatMessage;
+  onPreviewAttachment?: (attachment: Attachment) => void;
+}) {
   if (message.role === "user") {
     return (
       <div className="flex justify-end">
         <div className="max-w-[80%] rounded-2xl bg-[#F5A9F2] px-4 py-3 text-sm font-medium text-purple-900">
           {message.attachments && message.attachments.length > 0 && (
             <div className="mb-2 flex flex-wrap gap-2">
-              {message.attachments.map((attachment) => (
-                <span
-                  key={attachment.id}
-                  className="flex items-center gap-2 rounded-lg bg-white/70 px-3 py-1.5"
-                >
-                  <FileText className="h-4 w-4 shrink-0 text-red-500" />
-                  <span className="max-w-40 truncate">{attachment.fileName}</span>
-                  {attachment.status === "done" && (
-                    <Check className="h-4 w-4 shrink-0 text-green-600" />
-                  )}
-                  {attachment.status === "error" && (
-                    <CircleX className="h-4 w-4 shrink-0 text-red-600" />
-                  )}
-                </span>
-              ))}
+              {message.attachments.map((attachment) => {
+                const canPreview =
+                  attachment.extractedText !== undefined &&
+                  onPreviewAttachment !== undefined;
+                return (
+                  <button
+                    key={attachment.id}
+                    type="button"
+                    onClick={() => canPreview && onPreviewAttachment(attachment)}
+                    disabled={!canPreview}
+                    title={
+                      canPreview
+                        ? "Klik untuk lihat teks hasil ekstraksi"
+                        : undefined
+                    }
+                    className={`flex items-center gap-2 rounded-lg bg-white/70 px-3 py-1.5 transition-colors ${
+                      canPreview
+                        ? "cursor-pointer hover:bg-white"
+                        : "cursor-default"
+                    }`}
+                  >
+                    <FileText className="h-4 w-4 shrink-0 text-red-500" />
+                    <span className="max-w-40 truncate">
+                      {attachment.fileName}
+                    </span>
+                    {attachment.status === "done" && (
+                      <Check className="h-4 w-4 shrink-0 text-green-600" />
+                    )}
+                    {attachment.status === "error" && (
+                      <CircleX className="h-4 w-4 shrink-0 text-red-600" />
+                    )}
+                  </button>
+                );
+              })}
             </div>
           )}
           {message.content}
@@ -504,12 +592,39 @@ function TemplateCard({ text, onPick }: { text: string; onPick: (t: string) => v
 function AttachmentChip({
   attachment,
   onRemove,
+  onPreview,
 }: {
   attachment: Attachment;
   onRemove: () => void;
+  onPreview: (attachment: Attachment) => void;
 }) {
+  const canPreview =
+    attachment.status === "done" && attachment.extractedText !== undefined;
+
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-2">
+    <div
+      role="button"
+      tabIndex={canPreview ? 0 : -1}
+      onClick={() => canPreview && onPreview(attachment)}
+      onKeyDown={(e) => {
+        if (canPreview && (e.key === "Enter" || e.key === " ")) {
+          e.preventDefault();
+          onPreview(attachment);
+        }
+      }}
+      title={
+        canPreview
+          ? "Klik untuk lihat teks hasil ekstraksi"
+          : attachment.status === "error"
+            ? "Gagal mengekstrak teks"
+            : undefined
+      }
+      className={`flex items-center gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-2 transition-colors ${
+        canPreview
+          ? "cursor-pointer hover:border-pink-300 hover:bg-pink-50"
+          : "cursor-default"
+      }`}
+    >
       <FileText className="h-5 w-5 shrink-0 text-red-500" />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
@@ -527,7 +642,13 @@ function AttachmentChip({
         )}
         {attachment.status === "error" && (
           <div className="text-xs font-medium text-red-500">
-            Upload gagal
+            Gagal ekstrak teks
+          </div>
+        )}
+        {canPreview && (
+          <div className="text-xs font-medium text-purple-600">
+            {attachment.extractedText!.length.toLocaleString()} karakter · klik
+            untuk lihat
           </div>
         )}
       </div>
@@ -539,13 +660,25 @@ function AttachmentChip({
         <CircleX className="h-4 w-4 shrink-0 text-red-500" />
       )}
       {attachment.status !== "uploading" && (
-        <button
-          onClick={onRemove}
-          className="shrink-0 rounded-md p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-600"
+        <span
+          role="button"
+          tabIndex={0}
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.stopPropagation();
+              e.preventDefault();
+              onRemove();
+            }
+          }}
+          className="shrink-0 cursor-pointer rounded-md p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-600"
           aria-label="Remove attachment"
         >
           <X className="h-4 w-4" />
-        </button>
+        </span>
       )}
     </div>
   );
@@ -726,6 +859,7 @@ function ChatInput({
   attachments,
   onAddFiles,
   onRemoveAttachment,
+  onPreviewAttachment,
   model,
   onModelChange,
   provider,
@@ -738,6 +872,7 @@ function ChatInput({
   attachments: Attachment[];
   onAddFiles: (files: FileList | null) => void;
   onRemoveAttachment: (id: string) => void;
+  onPreviewAttachment: (attachment: Attachment) => void;
   model: "sft" | "rag";
   onModelChange: (m: "sft" | "rag") => void;
   provider: "local" | "deployed";
@@ -755,6 +890,7 @@ function ChatInput({
               key={attachment.id}
               attachment={attachment}
               onRemove={() => onRemoveAttachment(attachment.id)}
+              onPreview={onPreviewAttachment}
             />
           ))}
         </div>
@@ -910,6 +1046,7 @@ export default function ChatPage() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [filesModalSession, setFilesModalSession] = useState<ChatSession | null>(null);
+  const [previewAttachment, setPreviewAttachment] = useState<Attachment | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -1002,7 +1139,12 @@ export default function ChatPage() {
           );
         } else {
           const provider = sendProvider === "deployed" ? "wandb" : "vllm";
-          const aiResponse = await requestAIResponse(conversation, provider);
+          const aiResponse = await requestAIResponse(
+            conversation,
+            provider,
+            undefined,
+            attachments
+          );
           upsertSessionMessage(sessionId, aiResponse, { removeLoading: true });
         }
       } catch (error) {
@@ -1052,39 +1194,52 @@ export default function ChatPage() {
   const handleAddFiles = (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
 
-    setAttachments((prev) => {
-      const next = [...prev];
-      const added: Attachment[] = [];
+    const incoming = Array.from(fileList);
+    const pending: Attachment[] = [];
 
-      for (const file of Array.from(fileList)) {
-        if (next.length + added.length >= MAX_ATTACHMENTS) {
-          showToast(`Maksimal ${MAX_ATTACHMENTS} file per pesan.`);
-          break;
-        }
-        if (file.size > MAX_ATTACHMENT_SIZE) {
-          showToast(`"${file.name}" melebihi batas 10MB.`);
-          continue;
-        }
-        added.push({
-          id: uid("att"),
-          fileName: file.name,
-          fileSize: file.size,
-          status: "uploading",
-          file,
-        });
+    for (const file of incoming) {
+      if (attachments.length + pending.length >= MAX_ATTACHMENTS) {
+        showToast(`Maksimal ${MAX_ATTACHMENTS} file per pesan.`);
+        break;
       }
+      if (file.size > MAX_ATTACHMENT_SIZE) {
+        showToast(`"${file.name}" melebihi batas 10MB.`);
+        continue;
+      }
+      pending.push({
+        id: uid("att"),
+        fileName: file.name,
+        fileSize: file.size,
+        status: "uploading",
+        file,
+      });
+    }
 
-      return [...next, ...added];
-    });
+    if (pending.length === 0) return;
+    setAttachments((prev) => [...prev, ...pending]);
 
-    // Simulasi progress upload
-    setTimeout(() => {
-      setAttachments((prev) =>
-        prev.map((att) =>
-          att.status === "uploading" ? { ...att, status: "done" as const } : att
-        )
-      );
-    }, 1200);
+    // Ekstraksi teks asli lewat backend Python (PyMuPDF), bukan simulasi.
+    for (const attachment of pending) {
+      extractPdfText(attachment.file!)
+        .then(({ text }) => {
+          setAttachments((prev) =>
+            prev.map((att) =>
+              att.id === attachment.id
+                ? { ...att, status: "done" as const, extractedText: text }
+                : att
+            )
+          );
+        })
+        .catch(() => {
+          setAttachments((prev) =>
+            prev.map((att) =>
+              att.id === attachment.id
+                ? { ...att, status: "error" as const }
+                : att
+            )
+          );
+        });
+    }
   };
 
   const handleRemoveAttachment = (id: string) => {
@@ -1217,7 +1372,11 @@ export default function ChatPage() {
           ) : (
             <div className="mx-auto flex max-w-3xl flex-col gap-4">
               {activeMessages.map((message) => (
-                <MessageBubble key={message.id} message={message} />
+                <MessageBubble
+                  key={message.id}
+                  message={message}
+                  onPreviewAttachment={setPreviewAttachment}
+                />
               ))}
             </div>
           )}
@@ -1235,6 +1394,7 @@ export default function ChatPage() {
             attachments={attachments}
             onAddFiles={handleAddFiles}
             onRemoveAttachment={handleRemoveAttachment}
+            onPreviewAttachment={setPreviewAttachment}
             model={activeSession?.model ?? draftModel}
             onModelChange={handleModelChange}
             provider={activeSession?.provider ?? draftProvider}
@@ -1288,6 +1448,49 @@ export default function ChatPage() {
               ) : (
                 <p className="py-6 text-center text-sm text-zinc-400">
                   Belum ada file
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {previewAttachment && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setPreviewAttachment(null)}
+        >
+          <div
+            className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-zinc-200 px-5 py-4">
+              <div className="min-w-0">
+                <h3 className="truncate text-sm font-bold text-zinc-900">
+                  {previewAttachment.fileName}
+                </h3>
+                <p className="text-xs text-zinc-400">
+                  Teks hasil ekstraksi ·{" "}
+                  {(previewAttachment.extractedText?.length ?? 0).toLocaleString()}{" "}
+                  karakter
+                </p>
+              </div>
+              <button
+                onClick={() => setPreviewAttachment(null)}
+                className="shrink-0 rounded-lg p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700"
+                aria-label="Close preview"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-4">
+              {previewAttachment.extractedText ? (
+                <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-zinc-700">
+                  {previewAttachment.extractedText}
+                </pre>
+              ) : (
+                <p className="py-6 text-center text-sm text-zinc-400">
+                  Tidak ada teks yang berhasil diekstrak dari PDF ini.
                 </p>
               )}
             </div>

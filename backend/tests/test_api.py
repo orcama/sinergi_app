@@ -385,6 +385,40 @@ LEGAL_PDF_TEXT = (
 
 
 @pytest.mark.asyncio
+async def test_pdf_extract_endpoint_returns_text() -> None:
+    pdf = make_test_pdf("Putusan Nomor 123/Pid.B/2026/PN.JKT")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/api/pdf/extract",
+            json={"name": "putusan.pdf", "data": pdf},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["name"] == "putusan.pdf"
+    assert "Putusan Nomor 123/Pid.B/2026/PN.JKT" in payload["text"]
+    assert payload["char_count"] > 0
+
+
+@pytest.mark.asyncio
+async def test_pdf_extract_endpoint_reports_empty_pdf() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/api/pdf/extract",
+            json={"name": "blank.pdf", "data": "not-a-real-pdf"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["text"] == ""
+    assert payload["char_count"] == 0
+
+
+@pytest.mark.asyncio
 async def test_rag_ingest_sectionizes_pdf() -> None:
     pdf = make_test_pdf(LEGAL_PDF_TEXT)
     app.state.rag_docs = {}

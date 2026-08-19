@@ -17,7 +17,8 @@ export interface Attachment {
   fileSize: number;
   url?: string; // terisi setelah upload sukses
   status: "uploading" | "done" | "error";
-  file?: File; // file asli untuk proses RAG ingest
+  file?: File; // file asli untuk proses RAG ingest / kirim ke model
+  extractedText?: string; // teks hasil ekstraksi PDF dari backend
 }
 
 export interface ChatMessage {

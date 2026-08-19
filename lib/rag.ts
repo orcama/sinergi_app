@@ -51,6 +51,33 @@ export async function ingestPdf(file: File): Promise<RagDoc> {
   return payload as RagDoc;
 }
 
+export interface ExtractedPdfText {
+  name: string;
+  text: string;
+  char_count: number;
+}
+
+/** Extract the raw PDF text server-side (PyMuPDF) and return it. */
+export async function extractPdfText(file: File): Promise<ExtractedPdfText> {
+  const data = await toDataUrl(file);
+  const response = await fetch(`${RAG_API_URL}/api/pdf/extract`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: file.name, data }),
+  });
+  const payload = (await response.json().catch(() => null)) as
+    | ExtractedPdfText
+    | { detail?: string }
+    | null;
+  if (!response.ok) {
+    throw new Error(
+      (payload as { detail?: string })?.detail ??
+        `PDF extract returned ${response.status}`
+    );
+  }
+  return payload as ExtractedPdfText;
+}
+
 export async function queryRag(
   question: string,
   documentIds: string[],

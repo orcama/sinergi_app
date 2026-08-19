@@ -15,6 +15,12 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
+
+try:
+    import pymupdf  # PyMuPDF (better text extraction)
+except ImportError:  # pragma: no cover - pymupdf is a hard dependency
+    pymupdf = None  # type: ignore[assignment]
+
 from pypdf import PdfReader
 
 from app.rag import SECTION_LABELS, retrieve, sectionize
@@ -149,7 +155,7 @@ class ImageUrlPart(BaseModel):
 class PdfPart(BaseModel):
     type: Literal["pdf"] = "pdf"
     name: str = Field(min_length=1, max_length=255)
-    data: str = Field(min_length=1, max_length=10_000_000)
+    data: str = Field(min_length=1, max_length=20_000_000)
 
 
 ContentPart = Annotated[
@@ -177,7 +183,18 @@ class ChatResponse(BaseModel):
 
 class RagIngestRequest(BaseModel):
     name: str = Field(default="dokumen.pdf", min_length=1, max_length=255)
-    data: str = Field(min_length=1, max_length=10_000_000)
+    data: str = Field(min_length=1, max_length=20_000_000)
+
+
+class PdfExtractRequest(BaseModel):
+    name: str = Field(default="dokumen.pdf", min_length=1, max_length=255)
+    data: str = Field(min_length=1, max_length=20_000_000)
+
+
+class PdfExtractResponse(BaseModel):
+    name: str
+    text: str
+    char_count: int
 
 
 class RagSection(BaseModel):
@@ -213,21 +230,61 @@ class RagQueryResponse(BaseModel):
     hits: list[RagHit]
 
 
+def pdf_bytes(data: str) -> bytes | None:
+    """Decode a base64-encoded PDF (with optional ``data:`` prefix)."""
+    if "," in data and data.startswith("data:"):
+        data = data.split(",", 1)[1]
+    try:
+        return base64.b64decode(data)
+    except Exception:
+        return None
+
+
+def _extract_with_pymupdf(raw: bytes) -> str:
+    if pymupdf is None:
+        return ""
+    try:
+        doc = pymupdf.open(stream=raw, filetype="pdf")
+    except Exception:
+        return ""
+    try:
+        return "\n".join(page.get_text("text") or "" for page in doc)
+    except Exception:
+        return ""
+    finally:
+        doc.close()
+
+
+def _extract_with_pypdf(raw: bytes) -> str:
+    try:
+        reader = PdfReader(io.BytesIO(raw))
+        return "\n".join(page.extract_text() or "" for page in reader.pages)
+    except Exception:
+        return ""
+
+
 def extract_pdf_text(data: str, max_chars: int = 32_000, collapse: bool = True) -> str:
     """Extract text from a base64-encoded PDF (with optional data: prefix).
+
+    PyMuPDF is tried first because its text extraction is far more reliable
+    than pypdf's for real-world legal documents. Both engines are run and the
+    longer (more complete) result wins - some fonts/malformed streams cause one
+    engine to truncate early, so keeping the other avoids losing content.
 
     When ``collapse`` is True (default, used for chat context) all whitespace
     runs are collapsed to single spaces. Pass ``collapse=False`` to preserve
     line breaks for the section-aware RAG pipeline.
     """
-    if "," in data and data.startswith("data:"):
-        data = data.split(",", 1)[1]
-    try:
-        raw = base64.b64decode(data)
-        reader = PdfReader(io.BytesIO(raw))
-        text = "\n".join(page.extract_text() or "" for page in reader.pages)
-    except Exception:
+    raw = pdf_bytes(data)
+    if not raw:
         return ""
+    pymupdf_text = _extract_with_pymupdf(raw)
+    pypdf_text = _extract_with_pypdf(raw)
+    text = (
+        pymupdf_text
+        if len(pymupdf_text) >= len(pypdf_text) or not pypdf_text
+        else pypdf_text
+    ).strip()
     if collapse:
         text = " ".join(text.split())
     return text[:max_chars]
@@ -456,6 +513,18 @@ async def chat(body: ChatRequest, request: Request) -> ChatResponse:
 def _rag_text_for(doc: dict) -> str:
     """Plain text of an ingested RAG document (already extracted)."""
     return doc.get("text", "")
+
+
+@app.post("/api/pdf/extract", response_model=PdfExtractResponse)
+async def pdf_extract(body: PdfExtractRequest) -> PdfExtractResponse:
+    """Extract raw text from an uploaded PDF and return it to the client.
+
+    The frontend calls this on file attach so users can preview the extracted
+    text, and it guarantees the same backend extraction that is sent to the
+    model (both vLLM and deployed providers) is what gets displayed.
+    """
+    text = extract_pdf_text(body.data, max_chars=1_000_000, collapse=False).strip()
+    return PdfExtractResponse(name=body.name, text=text, char_count=len(text))
 
 
 @app.post("/api/rag/ingest", response_model=RagIngestResponse)
