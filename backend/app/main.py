@@ -216,6 +216,12 @@ class RagQueryResponse(BaseModel):
     hits: list[RagHit]
 
 
+class PdfExtractResponse(BaseModel):
+    name: str
+    text: str
+    char_count: int
+
+
 def extract_pdf_text(data: str, max_chars: int = 32_000, collapse: bool = True) -> str:
     """Extract text from a base64-encoded PDF (with optional data: prefix).
 
@@ -473,6 +479,18 @@ async def chat(body: ChatRequest, request: Request) -> ChatResponse:
 def _rag_text_for(doc: dict) -> str:
     """Plain text of an ingested RAG document (already extracted)."""
     return doc.get("text", "")
+
+
+@app.post("/api/pdf/extract", response_model=PdfExtractResponse)
+async def pdf_extract(body: RagIngestRequest) -> PdfExtractResponse:
+    """Extract raw text from a base64 PDF without storing it (used for preview)."""
+    text = extract_pdf_text(body.data, max_chars=1_000_000, collapse=False)
+    if not text:
+        raise HTTPException(
+            status_code=422,
+            detail=f"PDF '{body.name}' tidak dapat dibaca (tidak ada teks ter-extract).",
+        )
+    return PdfExtractResponse(name=body.name, text=text, char_count=len(text))
 
 
 @app.post("/api/rag/ingest", response_model=RagIngestResponse)
