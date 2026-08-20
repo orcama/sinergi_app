@@ -57,6 +57,8 @@ interface ChatState {
   setDeployedContextLimit: (limit: number) => void;
 
   // low-level message mutation used by the chat page send flow
+  // low-level message mutation used by the chat page send flow
+  // (replaces an existing message with the same id, otherwise appends)
   appendUserMessage: (sessionId: string | null, message: ChatMessage) => string;
   upsertSessionMessage: (
     sessionId: string,
@@ -193,6 +195,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         let messages = s.messages;
         if (options?.removeLoading) {
           messages = messages.filter((m) => !m.isLoading);
+        }
+        const existing = messages.find((m) => m.id === message.id);
+        if (existing) {
+          return {
+            ...s,
+            messages: messages.map((m) => (m.id === message.id ? message : m)),
+          };
         }
         return { ...s, messages: [...messages, message] };
       }),

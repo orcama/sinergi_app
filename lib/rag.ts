@@ -55,6 +55,7 @@ export interface ExtractedPdfText {
   name: string;
   text: string;
   char_count: number;
+  token_count: number;
 }
 
 /** Extract the raw PDF text server-side (PyMuPDF) and return it. */

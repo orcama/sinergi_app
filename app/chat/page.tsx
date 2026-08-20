@@ -111,12 +111,12 @@ type ChatPayloadMessage = {
   content: string | ChatContentPart[];
 };
 
-async function requestAIResponse(
+async function buildChatBody(
   messages: Pick<ChatMessage, "role" | "content">[],
   provider: "vllm" | "wandb",
   context?: string,
   attachments?: Attachment[]
-): Promise<ChatMessage> {
+): Promise<{ provider: "vllm" | "wandb"; messages: ChatPayloadMessage[] }> {
   let lastUserIndex = -1;
   messages.forEach((m, i) => {
     if (m.role === "user") lastUserIndex = i;
@@ -160,8 +160,108 @@ async function requestAIResponse(
     );
   }
 
-  const body = { provider, messages: bodyMessages };
+  return { provider, messages: bodyMessages };
+}
 
+interface StreamHandlers {
+  onThinking?: (chunk: string) => void;
+  onAnswer?: (chunk: string) => void;
+}
+
+/** Stream a chat completion from /api/chat/stream and parse the SSE events. */
+async function streamChat(
+  body: { provider: string; messages: ChatPayloadMessage[] },
+  handlers: StreamHandlers
+): Promise<void> {
+  const response = await fetch(`${CHAT_API_URL}/api/chat/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const data = (await response.json().catch(() => null)) as
+      | { detail?: string }
+      | null;
+    throw new Error(data?.detail || `Chat backend returned ${response.status}`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("Streaming is not supported by this browser.");
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    let boundary = buffer.indexOf("\n\n");
+    while (boundary !== -1) {
+      const rawEvent = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      boundary = buffer.indexOf("\n\n");
+
+      const dataLine = rawEvent
+        .split("\n")
+        .find((line) => line.startsWith("data:"))
+        ?.slice(5)
+        .trim();
+      if (!dataLine || dataLine === "[DONE]") continue;
+
+      let event: { type?: string; content?: string };
+      try {
+        event = JSON.parse(dataLine);
+      } catch {
+        continue;
+      }
+
+      if (event.type === "thinking" && event.content) {
+        handlers.onThinking?.(event.content);
+      } else if (event.type === "answer" && event.content) {
+        handlers.onAnswer?.(event.content);
+      }
+    }
+  }
+}
+
+async function requestAIResponse(
+  messages: Pick<ChatMessage, "role" | "content">[],
+  provider: "vllm" | "wandb",
+  context?: string,
+  attachments?: Attachment[],
+  handlers?: StreamHandlers
+): Promise<ChatMessage> {
+  const body = await buildChatBody(messages, provider, context, attachments);
+
+  // Streaming path (menampilkan thinking + answer secara real-time).
+  if (handlers) {
+    let thinking = "";
+    let content = "";
+    await streamChat(body, {
+      onThinking: (chunk) => {
+        thinking += chunk;
+        handlers.onThinking?.(chunk);
+      },
+      onAnswer: (chunk) => {
+        content += chunk;
+        handlers.onAnswer?.(chunk);
+      },
+    });
+
+    if (!content.trim()) {
+      throw new Error("The model returned an empty response.");
+    }
+    return {
+      id: uid("ai"),
+      role: "assistant",
+      content: content.trim(),
+      thinking: thinking.trim() || undefined,
+    };
+  }
+
+  // Non-streaming fallback.
   const response = await fetch(`${CHAT_API_URL}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -169,7 +269,7 @@ async function requestAIResponse(
   });
 
   const data = (await response.json().catch(() => null)) as
-    | { message?: { content?: string }; detail?: string }
+    | { message?: { content?: string; thinking?: string | null }; detail?: string }
     | null;
 
   if (!response.ok) {
@@ -179,7 +279,12 @@ async function requestAIResponse(
   const content = data?.message?.content?.trim();
   if (!content) throw new Error("The model returned an empty response.");
 
-  return { id: uid("ai"), role: "assistant", content };
+  return {
+    id: uid("ai"),
+    role: "assistant",
+    content,
+    thinking: data?.message?.thinking?.trim() || undefined,
+  };
 }
 
 function hitsToSources(hits: RagHit[]): Source[] {
@@ -201,7 +306,8 @@ async function requestRagResponse(
   question: string,
   attachments: Attachment[],
   conversation: Pick<ChatMessage, "role" | "content">[],
-  provider: "local" | "deployed"
+  provider: "local" | "deployed",
+  handlers?: StreamHandlers
 ): Promise<{ message: ChatMessage; sources: Source[] }> {
   const docIds: string[] = [];
   const ingestedNames: string[] = [];
@@ -244,7 +350,9 @@ async function requestRagResponse(
         ? `[Teks dokumen]\n${fallbackText}`
         : ingestedNames.length
           ? `Dokumen: ${ingestedNames.join(", ")}`
-          : undefined)
+          : undefined),
+    undefined,
+    handlers
   );
 
   return { message, sources };
@@ -592,6 +700,85 @@ function MarkdownContent({ content }: { content: string }) {
   );
 }
 
+function ThinkingAnswer({
+  thinking,
+  isStreaming,
+  thinkingSeconds,
+}: {
+  thinking?: string;
+  isStreaming: boolean;
+  thinkingSeconds?: number;
+}) {
+  const hasThinking = !!thinking?.trim();
+  const [expanded, setExpanded] = useState(true);
+  const [wasStreaming, setWasStreaming] = useState(false);
+
+  // Saat streaming mulai memproduksi teks berpikir, pastikan section tampil.
+  // (Adjusting state during render — pola React untuk sinkronisasi tanpa effect.)
+  if (isStreaming && hasThinking && !expanded) {
+    setExpanded(true);
+  }
+  // Begitu streaming selesai, otomatis collapse untuk menghemat ruang.
+  if (!isStreaming && wasStreaming) {
+    setWasStreaming(false);
+    setExpanded(false);
+  }
+  if (isStreaming && !wasStreaming) {
+    setWasStreaming(true);
+  }
+
+  if (!hasThinking) return null;
+
+  const label = isStreaming
+    ? "Berpikir..."
+    : thinkingSeconds != null
+      ? `Selesai berpikir (${thinkingSeconds.toLocaleString("id-ID")} detik)`
+      : "Selesai berpikir";
+
+  return (
+    <div className="mb-4 overflow-hidden rounded-xl border border-purple-200/60 bg-[#F7F6FB]">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center gap-2 px-4 py-2.5 text-left"
+        aria-expanded={expanded}
+      >
+        <span className="text-sm" aria-hidden>
+          🧠
+        </span>
+        <span className="flex-1 text-xs font-semibold text-zinc-500">
+          {label}
+        </span>
+        {isStreaming && (
+          <span className="flex items-center gap-0.5" aria-hidden>
+            <span className="h-1 w-1 animate-bounce rounded-full bg-zinc-400 [animation-delay:0ms]" />
+            <span className="h-1 w-1 animate-bounce rounded-full bg-zinc-400 [animation-delay:150ms]" />
+            <span className="h-1 w-1 animate-bounce rounded-full bg-zinc-400 [animation-delay:300ms]" />
+          </span>
+        )}
+        <ChevronDown
+          className={`h-4 w-4 text-zinc-400 transition-transform duration-200 ${
+            expanded ? "" : "-rotate-90"
+          }`}
+        />
+      </button>
+      <div
+        className={`grid transition-[grid-template-rows] duration-300 ease-out ${
+          expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+        }`}
+      >
+        <div className="overflow-hidden">
+          <div className="border-t border-purple-200/60 px-4 py-3">
+            <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed text-zinc-500">
+              {thinking}
+            </pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MessageBubble({
   message,
   onPreviewAttachment,
@@ -647,7 +834,7 @@ function MessageBubble({
     );
   }
 
-  if (message.isLoading) {
+  if (message.isLoading && !message.content?.trim() && !message.thinking?.trim()) {
     return (
       <div className="flex justify-start">
         <div className="rounded-2xl border border-pink-300 bg-white px-5 py-4">
@@ -668,7 +855,20 @@ function MessageBubble({
           <Sparkles className="h-4 w-4 text-pink-500" />
           <span className="text-xs font-bold text-purple-800">LEGAL-VERSE AI</span>
         </div>
-        <MarkdownContent content={message.content ?? ""} />
+        <ThinkingAnswer
+          thinking={message.thinking}
+          isStreaming={!!message.isLoading}
+          thinkingSeconds={message.thinkingSeconds}
+        />
+        {message.content?.trim() ? (
+          <MarkdownContent content={message.content} />
+        ) : (
+          !message.isLoading && (
+            <p className="text-sm text-zinc-400">
+              Tidak ada jawaban yang dihasilkan.
+            </p>
+          )
+        )}
       </div>
     </div>
   );
@@ -753,8 +953,9 @@ function AttachmentChip({
         )}
         {canPreview && (
           <div className="text-xs font-medium text-purple-600">
-            {attachment.extractedText!.length.toLocaleString()} karakter · klik
-            untuk lihat
+            {attachment.tokenCount != null
+              ? `${attachment.tokenCount.toLocaleString("id-ID")} token · klik untuk lihat`
+              : "Menghitung token..."}
           </div>
         )}
       </div>
@@ -1239,10 +1440,12 @@ export default function ChatPage() {
       setAttachments([]);
       setIsLoading(true);
 
+      const assistantId = uid("ai");
       const loadingMsg: ChatMessage = {
-        id: uid("loading"),
+        id: assistantId,
         role: "assistant",
         content: "",
+        thinking: "",
         isLoading: true,
       };
 
@@ -1262,17 +1465,61 @@ export default function ChatPage() {
       const sendModel = activeSession?.model ?? draftModel;
       const sendProvider = activeSession?.provider ?? draftProvider;
 
+      // State akumulasi streaming + waktu berpikir.
+      let streamThinking = "";
+      let streamAnswer = "";
+      let thinkingStartedAt: number | null = null;
+      let thinkingSeconds: number | undefined;
+
+      const upsertLive = (done: boolean) => {
+        upsertSessionMessage(
+          sessionId,
+          {
+            id: assistantId,
+            role: "assistant",
+            content: streamAnswer,
+            thinking: streamThinking || undefined,
+            thinkingSeconds,
+            isLoading: !done,
+          },
+          { removeLoading: done }
+        );
+      };
+
       try {
+        const streamHandlers: StreamHandlers = {
+          onThinking: (chunk) => {
+            if (thinkingStartedAt === null) thinkingStartedAt = Date.now();
+            streamThinking += chunk;
+            upsertLive(false);
+          },
+          onAnswer: (chunk) => {
+            if (thinkingStartedAt !== null) {
+              thinkingSeconds =
+                Math.round((Date.now() - thinkingStartedAt) / 100) / 10;
+            }
+            streamAnswer += chunk;
+            upsertLive(false);
+          },
+        };
+
         if (sendModel === "rag" && conversationAttachments.length > 0) {
           const { message: aiResponse, sources } = await requestRagResponse(
             trimmed,
             conversationAttachments,
             conversation,
-            sendProvider
+            sendProvider,
+            streamHandlers
           );
           upsertSessionMessage(
             sessionId,
-            { ...aiResponse, sources },
+            {
+              ...aiResponse,
+              content: streamAnswer || aiResponse.content,
+              thinking: streamThinking || aiResponse.thinking,
+              thinkingSeconds,
+              sources,
+            },
             { removeLoading: true }
           );
         } else {
@@ -1281,9 +1528,19 @@ export default function ChatPage() {
             conversation,
             provider,
             undefined,
-            conversationAttachments
+            conversationAttachments,
+            streamHandlers
           );
-          upsertSessionMessage(sessionId, aiResponse, { removeLoading: true });
+          upsertSessionMessage(
+            sessionId,
+            {
+              ...aiResponse,
+              content: streamAnswer || aiResponse.content,
+              thinking: streamThinking || aiResponse.thinking,
+              thinkingSeconds,
+            },
+            { removeLoading: true }
+          );
         }
       } catch (error) {
         const detail = error instanceof Error ? error.message : "Unknown error";
@@ -1359,11 +1616,16 @@ if (pending.length === 0) return;
     // Ekstraksi teks asli lewat backend Python (PyMuPDF), bukan simulasi.
     for (const attachment of pending) {
       extractPdfText(attachment.file!)
-        .then(({ text }) => {
+        .then(({ text, token_count }) => {
           setAttachments((prev) =>
             prev.map((att) =>
               att.id === attachment.id
-                ? { ...att, status: "done" as const, extractedText: text }
+                ? {
+                    ...att,
+                    status: "done" as const,
+                    extractedText: text,
+                    tokenCount: token_count,
+                  }
                 : att
             )
           );
@@ -1628,8 +1890,9 @@ if (pending.length === 0) return;
                 </h3>
                 <p className="text-xs text-zinc-400">
                   Teks hasil ekstraksi ·{" "}
-                  {(previewAttachment.extractedText?.length ?? 0).toLocaleString()}{" "}
-                  karakter
+                  {previewAttachment.tokenCount != null
+                    ? `${previewAttachment.tokenCount.toLocaleString("id-ID")} token`
+                    : "Menghitung token..."}
                 </p>
               </div>
               <button

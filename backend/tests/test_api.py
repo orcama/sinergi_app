@@ -102,7 +102,11 @@ async def test_chat_proxies_conversation_and_adds_system_prompt() -> None:
 
     assert response.status_code == 200
     assert response.json() == {
-        "message": {"role": "assistant", "content": "Halo juga."},
+        "message": {
+            "role": "assistant",
+            "content": "Halo juga.",
+            "thinking": None,
+        },
         "model": VLLM_MODEL,
         "provider": "vllm",
     }

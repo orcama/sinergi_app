@@ -31,12 +31,15 @@ export interface Attachment {
   status: "uploading" | "done" | "error";
   file?: File; // file asli untuk proses RAG ingest / kirim ke model
   extractedText?: string; // teks hasil ekstraksi PDF dari backend
+  tokenCount?: number; // jumlah token teks hasil ekstraksi (dari backend)
 }
 
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
+  thinking?: string; // reasoning trace (proses berpikir model), bila ada
+  thinkingSeconds?: number; // estimasi durasi proses berpikir
   sources?: Source[]; // hanya ada jika AI mereferensikan putusan
   isLoading?: boolean;
   attachments?: Attachment[];
