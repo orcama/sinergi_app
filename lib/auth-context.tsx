@@ -14,6 +14,7 @@ import {
   createUserWithEmailAndPassword,
   signInWithPopup,
   signOut as firebaseSignOut,
+  updateProfile,
   type User,
 } from "firebase/auth";
 import { auth, googleProvider } from "@/lib/firebase";
@@ -59,7 +60,7 @@ interface AuthContextValue {
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
   loginGoogle: () => Promise<void>;
-  register: (email: string, password: string) => Promise<void>;
+  register: (name: string, email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   getIdToken: () => Promise<string>;
 }
@@ -83,10 +84,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await syncUser(cred.user);
   }, []);
 
-  const register = useCallback(async (email: string, password: string) => {
-    const cred = await createUserWithEmailAndPassword(auth, email, password);
-    await syncUser(cred.user);
-  }, []);
+  const register = useCallback(
+    async (name: string, email: string, password: string) => {
+      const cred = await createUserWithEmailAndPassword(auth, email, password);
+      if (name.trim()) {
+        try {
+          await updateProfile(cred.user, { displayName: name.trim() });
+        } catch (err) {
+          console.error("updateProfile failed:", err);
+        }
+      }
+      await syncUser(cred.user);
+    },
+    []
+  );
 
   const loginGoogle = useCallback(async () => {
     const cred = await signInWithPopup(auth, googleProvider);

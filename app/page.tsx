@@ -99,7 +99,7 @@ export default function Home() {
     setAuthLoading(true);
     try {
       if (isSignUp) {
-        await register(email, password);
+        await register(name, email, password);
       } else {
         await login(email, password);
       }
