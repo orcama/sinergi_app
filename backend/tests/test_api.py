@@ -16,8 +16,11 @@ from app.main import (
     extract_pdf_text,
     flatten_content,
     load_providers,
+    PROVIDER_BY_ID,
     app,
 )
+
+VLLM_MODEL = PROVIDER_BY_ID["vllm"].model if "vllm" in PROVIDER_BY_ID else MODEL_ID
 
 MULTIMODAL_USER = {
     "role": "user",
@@ -71,7 +74,7 @@ async def test_chat_proxies_conversation_and_adds_system_prompt() -> None:
         payload = json.loads(request.content)
         assert request.url.path == "/v1/chat/completions"
         assert request.url.host == "127.0.0.1"
-        assert payload["model"] == MODEL_ID
+        assert payload["model"] == VLLM_MODEL
         assert payload["messages"][0] == {
             "role": "system",
             "content": DEFAULT_SYSTEM_PROMPT,
@@ -80,7 +83,7 @@ async def test_chat_proxies_conversation_and_adds_system_prompt() -> None:
         return httpx.Response(
             200,
             json={
-                "model": MODEL_ID,
+                "model": VLLM_MODEL,
                 "choices": [
                     {"message": {"role": "assistant", "content": "Halo juga."}}
                 ],
@@ -100,7 +103,7 @@ async def test_chat_proxies_conversation_and_adds_system_prompt() -> None:
     assert response.status_code == 200
     assert response.json() == {
         "message": {"role": "assistant", "content": "Halo juga."},
-        "model": MODEL_ID,
+        "model": VLLM_MODEL,
         "provider": "vllm",
     }
 

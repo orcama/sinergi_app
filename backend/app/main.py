@@ -64,6 +64,30 @@ MODEL_ID = os.getenv("MODEL_ID", DEFAULT_MODEL)
 SYSTEM_PROMPT = os.getenv("CHAT_SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT)
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "300"))
 
+
+def discover_vllm_model() -> str:
+    """Query the vLLM server for the model it is actually serving.
+
+    Uses ``GET {VLLM_BASE_URL}/v1/models`` so the gateway adapts to whatever
+    model vLLM is running (e.g. a swapped Gemma build) instead of relying on a
+    hardcoded MODEL_ID. Falls back to MODEL_ID when vLLM is unreachable or the
+    endpoint reports no model.
+    """
+    try:
+        resp = httpx.get(
+            f"{VLLM_BASE_URL}/v1/models",
+            timeout=min(REQUEST_TIMEOUT_SECONDS, 10),
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        model_list = data.get("data") or []
+        if model_list:
+            return str(model_list[0]["id"])
+    except (httpx.HTTPError, ValueError, KeyError, TypeError):
+        pass
+    return MODEL_ID
+
+
 WANDB_BASE_URL = os.getenv("WANDB_BASE_URL", "https://api.inference.wandb.ai").rstrip("/")
 WANDB_MODEL_ID = os.getenv("WANDB_MODEL_ID", DEFAULT_WANDB_MODEL)
 WANDB_API_KEY = os.getenv("WANDB_API_KEY", "") or wandb_key_from_models_md()
@@ -89,7 +113,7 @@ def _default_providers() -> list[ProviderConfig]:
         ProviderConfig(
             id="vllm",
             name="vLLM (Local)",
-            model=MODEL_ID,
+            model=discover_vllm_model(),
             base_url=VLLM_BASE_URL,
             kind="vllm",
             supports_images=False,
@@ -120,9 +144,18 @@ def load_providers() -> list[ProviderConfig]:
         return _default_providers()
     try:
         data = json.loads(raw)
-        return [ProviderConfig.model_validate(item) for item in data]
+        providers = [ProviderConfig.model_validate(item) for item in data]
     except (json.JSONDecodeError, ValidationError) as exc:
         raise RuntimeError("MODEL_PROVIDERS env var is not valid provider JSON") from exc
+
+    # Never hardcode the served model for local vLLM: pick up whatever the
+    # server is actually running, so swapping the model does not need a config
+    # change.
+    discovered = discover_vllm_model()
+    for provider in providers:
+        if provider.kind == "vllm":
+            provider.model = discovered
+    return providers
 
 
 PROVIDERS = load_providers()
