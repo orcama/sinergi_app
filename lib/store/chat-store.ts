@@ -15,29 +15,17 @@ function truncateTitle(text: string, max = 24): string {
   return clean.length > max ? `${clean.slice(0, max)}...` : clean;
 }
 
-const MODEL_CONTEXT_LIMIT: Record<string, number> = {
-  "local-sft": 32_000,
-  "local-rag": 128_000,
-  "deployed-sft": 262_000,
-  "deployed-rag": 262_000,
+const DEFAULT_CONTEXT_LIMITS: Record<"local" | "deployed", number> = {
+  local: 128_000,
+  deployed: 262_000,
 };
-
-function contextLimitFor(
-  provider: "local" | "deployed" | undefined,
-  model: "sft" | "rag" | undefined
-): number {
-  return (
-    MODEL_CONTEXT_LIMIT[`${provider ?? "local"}-${model ?? "sft"}`] ??
-    MODEL_CONTEXT_LIMIT["local-sft"]
-  );
-}
 
 interface ChatState {
   chatSessions: ChatSession[];
   activeSessionId: string | null;
   messages: ChatMessage[];
   isLoading: boolean;
-  deployedContextLimit: number;
+  providerContextLimits: Record<"local" | "deployed", number>;
 
   // selectors (read-only helpers)
   activeSession: () => ChatSession | null;
@@ -54,7 +42,9 @@ interface ChatState {
   getSession: (id: string) => ChatSession | null;
   setSessionModel: (id: string, model: "sft" | "rag") => void;
   setSessionProvider: (id: string, provider: "local" | "deployed") => void;
-  setDeployedContextLimit: (limit: number) => void;
+  setProviderContextLimits: (
+    limits: Partial<Record<"local" | "deployed", number>>
+  ) => void;
 
   // low-level message mutation used by the chat page send flow
   // low-level message mutation used by the chat page send flow
@@ -73,7 +63,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   activeSessionId: null,
   messages: [],
   isLoading: false,
-  deployedContextLimit: MODEL_CONTEXT_LIMIT["deployed-sft"],
+  providerContextLimits: { ...DEFAULT_CONTEXT_LIMITS },
 
   activeSession: () => {
     const { chatSessions, activeSessionId } = get();
@@ -129,7 +119,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ? {
               ...s,
               model,
-              contextLimit: contextLimitFor(s.provider ?? "local", model),
+              contextLimit:
+                state.providerContextLimits[s.provider ?? "local"] ??
+                DEFAULT_CONTEXT_LIMITS[s.provider ?? "local"],
             }
           : s
       ),
@@ -142,17 +134,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ? {
               ...s,
               provider,
-              contextLimit: contextLimitFor(provider, s.model ?? "sft"),
+              contextLimit:
+                state.providerContextLimits[provider] ??
+                DEFAULT_CONTEXT_LIMITS[provider],
             }
           : s
       ),
     })),
 
-  setDeployedContextLimit: (limit) =>
+  setProviderContextLimits: (limits) =>
     set((state) => ({
-      deployedContextLimit: limit,
+      providerContextLimits: { ...state.providerContextLimits, ...limits },
       chatSessions: state.chatSessions.map((s) =>
-        s.provider === "deployed" ? { ...s, contextLimit: limit } : s
+        s.provider
+          ? {
+              ...s,
+              contextLimit:
+                (limits[s.provider] ?? state.providerContextLimits[s.provider]) ??
+                s.contextLimit,
+            }
+          : s
       ),
     })),
 
@@ -168,7 +169,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           createdAt: new Date().toISOString(),
           model: "sft",
           provider: "local",
-          contextLimit: contextLimitFor("local", "sft"),
+          contextLimit:
+            state.providerContextLimits.local ?? DEFAULT_CONTEXT_LIMITS.local,
         };
         createdId = newSession.id;
         return {

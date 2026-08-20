@@ -99,6 +99,22 @@ function formatTokens(n: number): string {
   return `${n}`;
 }
 
+function trimConversationToLimit(
+  messages: ChatMessage[],
+  limit: number
+): ChatMessage[] {
+  let total = 0;
+  let start = messages.length;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    const tokens = Math.round((m.content?.length ?? 0) / 4);
+    if (total + tokens > limit && i !== messages.length - 1) break;
+    total += tokens;
+    start = i;
+  }
+  return messages.slice(start);
+}
+
 const CHAT_API_URL =
   process.env.NEXT_PUBLIC_CHAT_API_URL ?? "http://127.0.0.1:8001";
 
@@ -1418,6 +1434,34 @@ export default function ChatPage() {
   const setSessionProvider = useChatStore((s) => s.setSessionProvider);
   const appendUserMessage = useChatStore((s) => s.appendUserMessage);
   const upsertSessionMessage = useChatStore((s) => s.upsertSessionMessage);
+  const setProviderContextLimits = useChatStore(
+    (s) => s.setProviderContextLimits
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${CHAT_API_URL}/api/models`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled || !Array.isArray(data.providers)) return;
+        const limits: Partial<Record<"local" | "deployed", number>> = {};
+        for (const p of data.providers) {
+          const key = p.id === "vllm" ? "local" : p.id === "wandb" ? "deployed" : null;
+          if (key && typeof p.context_window === "number") {
+            limits[key] = p.context_window;
+          }
+        }
+        if (Object.keys(limits).length > 0) setProviderContextLimits(limits);
+      } catch {
+        // backend tak terjangkau; pertahankan limit default
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [setProviderContextLimits]);
 
   const latestSources = useCallback(() => {
     if (!activeSession) return undefined;
@@ -1470,17 +1514,23 @@ export default function ChatPage() {
         upsertSessionMessage(sessionId, loadingMsg);
       }
 
-      const conversation = [
-        ...(activeSession?.messages ?? []),
-        userMessage,
-      ].map(({ role, content }) => ({ role, content }));
+      const sendModel = activeSession?.model ?? draftModel;
+      const sendProvider = activeSession?.provider ?? draftProvider;
+
+      const historyLimit =
+        activeSession?.contextLimit ??
+        (sendProvider === "deployed" ? 262_000 : 128_000);
+      const trimmedHistory = trimConversationToLimit(
+        activeSession?.messages ?? [],
+        historyLimit
+      );
+      const conversation = [...trimmedHistory, userMessage].map(
+        ({ role, content }) => ({ role, content })
+      );
       const conversationAttachments = collectConversationAttachments(
         activeSession?.messages ?? [],
         attachments
       );
-
-      const sendModel = activeSession?.model ?? draftModel;
-      const sendProvider = activeSession?.provider ?? draftProvider;
 
       // State akumulasi streaming + waktu berpikir.
       let streamThinking = "";
