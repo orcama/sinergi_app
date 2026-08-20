@@ -76,11 +76,20 @@ const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024; // 10MB
 
 function estimateTokens(session: ChatSession | null): number {
   if (!session) return 0;
-  const chars = session.messages.reduce(
+  const chatChars = session.messages.reduce(
     (sum, m) => sum + (m.content?.length ?? 0),
     0
   );
-  return Math.round(chars / 4);
+  const attachmentTokens = session.messages.reduce(
+    (sum, m) =>
+      sum +
+      (m.attachments ?? []).reduce(
+        (a, att) => a + (att.tokenCount ?? 0),
+        0
+      ),
+    0
+  );
+  return Math.round(chatChars / 4) + attachmentTokens;
 }
 
 function formatTokens(n: number): string {
@@ -849,28 +858,36 @@ function MessageBubble({
   }
 
   return (
-    <div className="flex justify-start">
-      <div className="w-full max-w-3xl rounded-2xl border border-pink-300 bg-white px-6 py-5">
-        <div className="flex items-center gap-2 pb-3">
-          <Sparkles className="h-4 w-4 text-pink-500" />
-          <span className="text-xs font-bold text-purple-800">LEGAL-VERSE AI</span>
+    <>
+      {message.thinking?.trim() && (
+        <div className="flex justify-start">
+          <div className="w-full max-w-3xl">
+            <ThinkingAnswer
+              thinking={message.thinking}
+              isStreaming={!!message.isLoading}
+              thinkingSeconds={message.thinkingSeconds}
+            />
+          </div>
         </div>
-        <ThinkingAnswer
-          thinking={message.thinking}
-          isStreaming={!!message.isLoading}
-          thinkingSeconds={message.thinkingSeconds}
-        />
-        {message.content?.trim() ? (
-          <MarkdownContent content={message.content} />
-        ) : (
-          !message.isLoading && (
-            <p className="text-sm text-zinc-400">
-              Tidak ada jawaban yang dihasilkan.
-            </p>
-          )
-        )}
+      )}
+      <div className="flex justify-start">
+        <div className="w-full max-w-3xl rounded-2xl border border-pink-300 bg-white px-6 py-5">
+          <div className="flex items-center gap-2 pb-3">
+            <Sparkles className="h-4 w-4 text-pink-500" />
+            <span className="text-xs font-bold text-purple-800">LEGAL-VERSE AI</span>
+          </div>
+          {message.content?.trim() ? (
+            <MarkdownContent content={message.content} />
+          ) : (
+            !message.isLoading && (
+              <p className="text-sm text-zinc-400">
+                Tidak ada jawaban yang dihasilkan.
+              </p>
+            )
+          )}
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 
