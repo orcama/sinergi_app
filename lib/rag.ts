@@ -81,12 +81,18 @@ export async function extractPdfText(file: File): Promise<ExtractedPdfText> {
 export async function queryRag(
   question: string,
   documentIds: string[],
-  topK = 3
+  topK = 3,
+  text?: string
 ): Promise<RagHit[]> {
   const response = await fetch(`${RAG_API_URL}/api/rag/query`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, document_ids: documentIds, top_k: topK }),
+    body: JSON.stringify({
+      question,
+      document_ids: documentIds,
+      top_k: topK,
+      ...(text ? { text } : {}),
+    }),
   });
   const payload = (await response.json().catch(() => null)) as
     | { hits?: RagHit[]; detail?: string }

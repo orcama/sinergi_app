@@ -35,6 +35,7 @@ import type {
   Source,
 } from "@/lib/types";
 import { useChatStore } from "@/lib/store/chat-store";
+import { collectConversationAttachments } from "@/lib/chat-context";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -135,6 +136,13 @@ async function requestAIResponse(
           name: attachment.fileName,
           data: await fileToDataUrl(attachment.file),
         });
+      } else if (attachment.extractedText?.trim()) {
+        parts.push({
+          type: "text",
+          text: `[Dokumen: ${attachment.fileName}]\n${attachment.extractedText
+            .trim()
+            .slice(0, 31_000)}`,
+        });
       }
     }
     const last = messages[lastUserIndex];
@@ -175,7 +183,7 @@ async function requestAIResponse(
 }
 
 function hitsToSources(hits: RagHit[]): Source[] {
-  return hits.map((hit, i) => ({
+  return hits.map((hit) => ({
     id: uid(`src-${hit.key}`),
     title: hit.label,
     hakim: "",
@@ -197,17 +205,28 @@ async function requestRagResponse(
 ): Promise<{ message: ChatMessage; sources: Source[] }> {
   const docIds: string[] = [];
   const ingestedNames: string[] = [];
+  const inlineTexts: string[] = [];
 
   for (const attachment of attachments) {
-    if (attachment.status !== "done" || !attachment.file) {
+    if (attachment.status !== "done") {
       throw new Error(`File "${attachment.fileName}" belum siap untuk diproses.`);
     }
-    const doc = await ingestPdf(attachment.file);
-    docIds.push(doc.id);
-    ingestedNames.push(doc.name);
+    if (attachment.file) {
+      const doc = await ingestPdf(attachment.file);
+      docIds.push(doc.id);
+      ingestedNames.push(doc.name);
+    } else if (attachment.extractedText?.trim()) {
+      inlineTexts.push(attachment.extractedText.trim());
+      ingestedNames.push(attachment.fileName);
+    }
   }
 
-  const hits = await queryRag(question, docIds);
+  const hits = await queryRag(
+    question,
+    docIds,
+    3,
+    inlineTexts.length > 0 ? inlineTexts.join("\n\n") : undefined
+  );
   const context = hitsToContext(hits);
   const sources = hitsToSources(hits);
 
@@ -1235,15 +1254,19 @@ export default function ChatPage() {
         ...(activeSession?.messages ?? []),
         userMessage,
       ].map(({ role, content }) => ({ role, content }));
+      const conversationAttachments = collectConversationAttachments(
+        activeSession?.messages ?? [],
+        attachments
+      );
 
       const sendModel = activeSession?.model ?? draftModel;
       const sendProvider = activeSession?.provider ?? draftProvider;
 
       try {
-        if (sendModel === "rag" && attachments.length > 0) {
+        if (sendModel === "rag" && conversationAttachments.length > 0) {
           const { message: aiResponse, sources } = await requestRagResponse(
             trimmed,
-            attachments,
+            conversationAttachments,
             conversation,
             sendProvider
           );
@@ -1258,7 +1281,7 @@ export default function ChatPage() {
             conversation,
             provider,
             undefined,
-            attachments
+            conversationAttachments
           );
           upsertSessionMessage(sessionId, aiResponse, { removeLoading: true });
         }

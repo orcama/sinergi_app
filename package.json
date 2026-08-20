@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:frontend": "node --experimental-strip-types --test lib/*.test.ts"
   },
   "dependencies": {
     "axios": "^1.19.0",
