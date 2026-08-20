@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type AnchorHTMLAttributes, type ComponentProps } from "react";
 import {
   Plus,
   Library,
@@ -35,6 +35,8 @@ import type {
   Source,
 } from "@/lib/types";
 import { useChatStore } from "@/lib/store/chat-store";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   extractPdfText,
   hitsToContext,
@@ -496,6 +498,81 @@ function Sidebar({
   );
 }
 
+const markdownComponents = {
+  h1: (props: ComponentProps<"h1">) => (
+    <h1 className="mb-3 mt-2 text-xl font-bold text-[#241B3A]" {...props} />
+  ),
+  h2: (props: ComponentProps<"h2">) => (
+    <h2 className="mb-2 mt-4 text-lg font-bold text-[#241B3A]" {...props} />
+  ),
+  h3: (props: ComponentProps<"h3">) => (
+    <h3 className="mb-2 mt-3 text-base font-bold text-[#241B3A]" {...props} />
+  ),
+  p: (props: ComponentProps<"p">) => (
+    <p className="mb-2 leading-relaxed" {...props} />
+  ),
+  strong: (props: ComponentProps<"strong">) => (
+    <strong className="font-bold text-[#241B3A]" {...props} />
+  ),
+  ul: (props: ComponentProps<"ul">) => (
+    <ul className="mb-2 list-disc space-y-1.5 pl-5 leading-relaxed" {...props} />
+  ),
+  ol: (props: ComponentProps<"ol">) => (
+    <ol className="mb-2 list-decimal space-y-1.5 pl-5 leading-relaxed" {...props} />
+  ),
+  li: (props: ComponentProps<"li">) => (
+    <li className="leading-relaxed" {...props} />
+  ),
+  blockquote: (props: ComponentProps<"blockquote">) => (
+    <blockquote
+      className="mb-2 border-l-4 border-[#7C3AED] bg-[#7C3AED]/5 py-1 pl-4 pr-3 leading-relaxed text-zinc-700"
+      {...props}
+    />
+  ),
+  table: (props: ComponentProps<"table">) => (
+    <table
+      className="my-2 w-full border-collapse overflow-hidden rounded-lg border border-zinc-200 text-sm"
+      {...props}
+    />
+  ),
+  thead: (props: ComponentProps<"thead">) => (
+    <thead className="bg-[#7C3AED]/10 text-left" {...props} />
+  ),
+  th: (props: ComponentProps<"th">) => (
+    <th
+      className="border-b border-zinc-200 px-3 py-2 font-bold text-[#241B3A]"
+      {...props}
+    />
+  ),
+  td: (props: ComponentProps<"td">) => (
+    <td className="border-b border-zinc-100 px-3 py-2 align-top" {...props} />
+  ),
+  a: (props: AnchorHTMLAttributes<HTMLAnchorElement>) => (
+    <a
+      className="font-medium text-[#7C3AED] underline"
+      target="_blank"
+      rel="noopener noreferrer"
+      {...props}
+    />
+  ),
+  code: (props: ComponentProps<"code">) => (
+    <code
+      className="rounded bg-zinc-100 px-1 py-0.5 font-mono text-[0.85em] text-[#241B3A]"
+      {...props}
+    />
+  ),
+};
+
+function MarkdownContent({ content }: { content: string }) {
+  return (
+    <div className="text-sm text-zinc-800">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
 function MessageBubble({
   message,
   onPreviewAttachment,
@@ -572,22 +649,7 @@ function MessageBubble({
           <Sparkles className="h-4 w-4 text-pink-500" />
           <span className="text-xs font-bold text-purple-800">LEGAL-VERSE AI</span>
         </div>
-        <div className="space-y-3 text-sm leading-relaxed text-zinc-800">
-          {message.content.split("\n").map((line, i) => {
-            if (!line.trim()) return null;
-            const isList = /^\d+\./.test(line);
-            if (isList) {
-              const [num, ...rest] = line.split(" ");
-              return (
-                <div key={i} className="flex gap-3">
-                  <span className="font-bold text-pink-500">{num}</span>
-                  <span>{rest.join(" ")}</span>
-                </div>
-              );
-            }
-            return <p key={i}>{line}</p>;
-          })}
-        </div>
+        <MarkdownContent content={message.content ?? ""} />
       </div>
     </div>
   );
