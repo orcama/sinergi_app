@@ -131,11 +131,11 @@ Run the two backend processes in separate terminals.
 ```bash
 source ~/.venv-vllm-metal/bin/activate
 
-vllm serve Qwen/Qwen3.5-4B \
-  --served-model-name Qwen/Qwen3.5-4B \
+vllm serve Legal-verse/InaVerdict-gemma-v2 \
+  --served-model-name Legal-verse/InaVerdict-gemma-v2 \
   --host 127.0.0.1 \
   --port 8000 \
-  --max-model-len 16000 \
+  --max-model-len 12000 \
   --max-num-seqs 2
 ```
 
