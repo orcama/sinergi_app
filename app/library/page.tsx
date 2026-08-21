@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import {
   Library,
   Plus,
@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { AuthGuard } from "@/lib/components/auth/AuthGuard";
 import { useAuth } from "@/lib/auth-context";
+import { fetchLibraryFiles, deleteLibraryFile } from "@/lib/rag";
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -56,67 +57,6 @@ function formatDate(isoString: string): string {
     day: "numeric",
   });
 }
-
-/* ------------------------------------------------------------------ */
-/* Mock data                                                           */
-/* ------------------------------------------------------------------ */
-
-const MOCK_FILES: LibraryFile[] = [
-  {
-    id: "f1",
-    name: "Putusan_Tipikor_2026.pdf",
-    type: "document",
-    extension: "pdf",
-    modifiedAt: "2026-08-07T09:30:00.000Z",
-    sizeInBytes: 2_400_000_000,
-    chatId: "s1",
-  },
-  {
-    id: "f2",
-    name: "SK_KPN_2026.docx",
-    type: "document",
-    extension: "docx",
-    modifiedAt: "2026-08-01T14:20:00.000Z",
-    sizeInBytes: 243_000_000,
-    chatId: "s1",
-  },
-  {
-    id: "f3",
-    name: "Dokumen_Sidang.png",
-    type: "image",
-    extension: "png",
-    modifiedAt: "2026-07-28T11:05:00.000Z",
-    sizeInBytes: 190_000,
-    chatId: "s2",
-  },
-  {
-    id: "f4",
-    name: "Laporan_Analisis.docx",
-    type: "document",
-    extension: "docx",
-    modifiedAt: "2026-07-15T16:45:00.000Z",
-    sizeInBytes: 243_000_000,
-    chatId: "s3",
-  },
-  {
-    id: "f5",
-    name: "Bukti_Foto.img",
-    type: "image",
-    extension: "img",
-    modifiedAt: "2026-06-30T08:10:00.000Z",
-    sizeInBytes: 5_000_000,
-    chatId: "s2",
-  },
-  {
-    id: "f6",
-    name: "Permohonan_Banding.docx",
-    type: "document",
-    extension: "docx",
-    modifiedAt: "2026-06-12T10:00:00.000Z",
-    sizeInBytes: 190_000,
-    chatId: "s4",
-  },
-];
 
 /* ------------------------------------------------------------------ */
 /* Sub-components                                                      */
@@ -403,7 +343,32 @@ function LibraryPage() {
   const [activeFilter, setActiveFilter] = useState<"all" | "images" | "documents">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [files, setFiles] = useState<LibraryFile[]>(MOCK_FILES);
+  const [files, setFiles] = useState<LibraryFile[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchLibraryFiles()
+      .then((records) => {
+        if (cancelled) return;
+        setFiles(
+          records.map((r) => ({
+            id: r.id,
+            name: r.name,
+            type: r.type === "image" ? "image" : "document",
+            extension: r.extension,
+            modifiedAt: r.modified_at,
+            sizeInBytes: r.size_in_bytes,
+            chatId: r.chat_id ?? undefined,
+          }))
+        );
+      })
+      .catch(() => {
+        // backend tak terjangkau; biarkan daftar kosong
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const filteredFiles = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -441,8 +406,14 @@ function LibraryPage() {
     });
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (!window.confirm("Hapus file ini?")) return;
+    try {
+      await deleteLibraryFile(id);
+    } catch {
+      alert("Gagal menghapus file.");
+      return;
+    }
     setFiles((prev) => prev.filter((f) => f.id !== id));
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -451,9 +422,15 @@ function LibraryPage() {
     });
   };
 
-  const handleBulkDelete = () => {
+  const handleBulkDelete = async () => {
     if (selectedIds.size === 0) return;
     if (!window.confirm(`Hapus ${selectedIds.size} file terpilih?`)) return;
+    try {
+      await Promise.all([...selectedIds].map((id) => deleteLibraryFile(id)));
+    } catch {
+      alert("Gagal menghapus beberapa file.");
+      return;
+    }
     setFiles((prev) => prev.filter((f) => !selectedIds.has(f.id)));
     setSelectedIds(new Set());
   };

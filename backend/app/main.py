@@ -8,6 +8,7 @@ import re
 import time
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -15,7 +16,7 @@ import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from firebase_admin import firestore
+from firebase_admin import firestore, storage
 from pydantic import BaseModel, Field, ValidationError
 from pypdf import PdfReader
 
@@ -309,6 +310,27 @@ class PdfExtractResponse(BaseModel):
     token_count: int
 
 
+class LibrarySaveRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    data: str = Field(min_length=1, max_length=10_000_000)
+    size: int = Field(default=0, ge=0)
+    text: str = Field(default="", max_length=1_000_000)
+    token_count: int = Field(default=0, ge=0)
+    chat_id: str | None = Field(default=None, max_length=255)
+
+
+class LibraryItem(BaseModel):
+    id: str
+    name: str
+    type: str
+    extension: str
+    modified_at: str
+    size_in_bytes: int
+    chat_id: str | None
+    storage_path: str
+    token_count: int
+
+
 def extract_pdf_text(data: str, max_chars: int = 32_000, collapse: bool = True) -> str:
     """Extract text from a base64-encoded PDF (with optional data: prefix).
 
@@ -437,7 +459,7 @@ app.add_middleware(
         "CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
     ),
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["Content-Type", "Authorization"],
 )
 
@@ -793,3 +815,108 @@ async def rag_query(body: RagQueryRequest, request: Request) -> RagQueryResponse
             for hit in hits
         ],
     )
+
+
+@app.post("/api/library", response_model=LibraryItem)
+async def library_save(
+    body: LibrarySaveRequest, user: dict = Depends(get_current_user)
+) -> LibraryItem:
+    """Save a PDF (Cloud Storage) plus its extracted text/metadata (Firestore)."""
+    uid = user["uid"]
+    if "," in body.data and body.data.startswith("data:"):
+        data = body.data.split(",", 1)[1]
+    else:
+        data = body.data
+    try:
+        raw = base64.b64decode(data)
+    except Exception:
+        raise HTTPException(status_code=422, detail="Data file tidak valid.")
+
+    file_id = str(uuid.uuid4())
+    ext = os.path.splitext(body.name)[1].lower() or ".pdf"
+    storage_path = f"users/{uid}/library/{file_id}{ext}"
+    bucket = storage.bucket()
+    blob = bucket.blob(storage_path)
+    blob.upload_from_string(
+        raw, content_type="application/pdf" if ext == ".pdf" else "application/octet-stream"
+    )
+    blob.make_public()
+
+    doc_ref = db.collection("files").document(file_id)
+    doc_ref.set(
+        {
+            "user_id": uid,
+            "name": body.name,
+            "size": body.size,
+            "text": body.text,
+            "token_count": body.token_count,
+            "chat_id": body.chat_id or "",
+            "storage_path": storage_path,
+            "type": "document",
+            "extension": ext.lstrip(".") or "pdf",
+            "created_at": firestore.SERVER_TIMESTAMP,
+        }
+    )
+
+    return LibraryItem(
+        id=file_id,
+        name=body.name,
+        type="document",
+        extension=ext.lstrip(".") or "pdf",
+        modified_at=datetime.now(timezone.utc).isoformat(),
+        size_in_bytes=body.size,
+        chat_id=body.chat_id,
+        storage_path=storage_path,
+        token_count=body.token_count,
+    )
+
+
+@app.get("/api/library")
+async def library_list(user: dict = Depends(get_current_user)) -> JSONResponse:
+    """List the current user's saved library files (newest first)."""
+    uid = user["uid"]
+    docs = db.collection("files").where("user_id", "==", uid).stream()
+    items = []
+    for doc in docs:
+        d = doc.to_dict()
+        items.append(
+            {
+                "id": doc.id,
+                "name": d.get("name", ""),
+                "type": d.get("type", "document"),
+                "extension": d.get("extension", "pdf"),
+                "modified_at": d.get("created_at").isoformat()
+                if d.get("created_at")
+                else d.get("modified_at", ""),
+                "size_in_bytes": d.get("size", 0),
+                "chat_id": d.get("chat_id") or None,
+                "storage_path": d.get("storage_path", ""),
+                "token_count": d.get("token_count", 0),
+            }
+        )
+    items.sort(key=lambda x: x["modified_at"], reverse=True)
+    return JSONResponse(content={"files": items})
+
+
+@app.delete("/api/library/{file_id}")
+async def library_delete(
+    file_id: str, user: dict = Depends(get_current_user)
+) -> JSONResponse:
+    """Delete a library file from Firestore and Cloud Storage."""
+    uid = user["uid"]
+    doc_ref = db.collection("files").document(file_id)
+    doc = doc_ref.get()
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail="File tidak ditemukan.")
+    data = doc.to_dict()
+    if data.get("user_id") != uid:
+        raise HTTPException(status_code=403, detail="Akses ditolak.")
+
+    storage_path = data.get("storage_path")
+    if storage_path:
+        try:
+            storage.bucket().blob(storage_path).delete()
+        except Exception:
+            pass
+    doc_ref.delete()
+    return JSONResponse(content={"ok": True, "id": file_id})

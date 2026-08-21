@@ -43,6 +43,7 @@ import {
   hitsToContext,
   ingestPdf,
   queryRag,
+  saveToLibrary,
   type RagHit,
 } from "@/lib/rag";
 import { AuthGuard } from "@/lib/components/auth/AuthGuard";
@@ -1695,6 +1696,20 @@ if (pending.length === 0) return;
                   }
                 : att
             )
+          );
+          // Simpan PDF (Cloud Storage) + teks/metadata (Firestore) ke library.
+          saveToLibrary(
+            attachment.file!,
+            text,
+            token_count,
+            activeSessionId ?? undefined
+          ).then(
+            () => {
+              console.log("[library] tersimpan:", attachment.fileName);
+            },
+            (err) => {
+              console.warn("[library] gagal menyimpan:", attachment.fileName, err);
+            }
           );
         })
         .catch(() => {

@@ -1,6 +1,8 @@
 const RAG_API_URL =
   process.env.NEXT_PUBLIC_CHAT_API_URL ?? "http://127.0.0.1:8001";
 
+import { auth } from "@/lib/firebase";
+
 export interface RagSection {
   key: string;
   label: string;
@@ -117,4 +119,93 @@ export function hitsToContext(hits: RagHit[], maxChars = 6000): string {
     used += block.length;
   }
   return parts.join("\n\n");
+}
+
+export interface LibraryFileRecord {
+  id: string;
+  name: string;
+  type: string;
+  extension: string;
+  modified_at: string;
+  size_in_bytes: number;
+  chat_id: string | null;
+  storage_path: string;
+  token_count: number;
+}
+
+function toDataUrlLibrary(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error(`Gagal membaca file ${file.name}`));
+    reader.readAsDataURL(file);
+  });
+}
+
+export async function saveToLibrary(
+  file: File,
+  text: string,
+  tokenCount: number,
+  chatId?: string
+): Promise<LibraryFileRecord> {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Belum login");
+  const token = await user.getIdToken();
+  const data = await toDataUrlLibrary(file);
+  const response = await fetch(`${RAG_API_URL}/api/library`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      name: file.name,
+      data,
+      size: file.size,
+      text,
+      token_count: tokenCount,
+      chat_id: chatId,
+    }),
+  });
+  const payload = (await response.json().catch(() => null)) as
+    | LibraryFileRecord
+    | { detail?: string }
+    | null;
+  if (!response.ok) {
+    throw new Error(
+      (payload as { detail?: string })?.detail ??
+        `Library save returned ${response.status}`
+    );
+  }
+  return payload as LibraryFileRecord;
+}
+
+export async function fetchLibraryFiles(): Promise<LibraryFileRecord[]> {
+  const user = auth.currentUser;
+  if (!user) return [];
+  const token = await user.getIdToken();
+  const response = await fetch(`${RAG_API_URL}/api/library`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const payload = (await response.json().catch(() => null)) as
+    | { files?: LibraryFileRecord[] }
+    | null;
+  if (!response.ok) return [];
+  return payload?.files ?? [];
+}
+
+export async function deleteLibraryFile(id: string): Promise<void> {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Belum login");
+  const token = await user.getIdToken();
+  const response = await fetch(`${RAG_API_URL}/api/library/${id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as
+      | { detail?: string }
+      | null;
+    throw new Error(payload?.detail ?? `Library delete returned ${response.status}`);
+  }
 }
