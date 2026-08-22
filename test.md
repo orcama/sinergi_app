@@ -1,4 +1,4 @@
-  curl https://volleyball-availability-commodities-drinking.trycloudflare.com/api/chat \
+  curl https://graham-subscribe-equity-transmit.trycloudflare.com/api/chat \
     -H 'Content-Type: application/json' \
     -d '{
       "provider": "vllm",
