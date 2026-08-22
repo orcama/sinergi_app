@@ -122,11 +122,12 @@ If `WANDB_API_KEY` is left empty, the gateway falls back to the API key
 embedded in `backend/models.md`. That file is git-ignored, so it only exists on
 machines that have it.
 
-## Starting the backend
+## Running locally in two terminals
 
-Run the two backend processes in separate terminals.
+This manual mode is useful for development and troubleshooting. For the
+always-reachable, scale-to-zero Mac server, use **On-demand Mac server** below.
 
-### Terminal 1: start vLLM Metal
+### Terminal 1: start vLLM Metal manually
 
 ```bash
 source ~/.venv-vllm-metal/bin/activate
@@ -136,13 +137,25 @@ vllm serve Legal-verse/InaVerdict-gemma-v2 \
   --host 127.0.0.1 \
   --port 8000 \
   --max-model-len 12000 \
-  --max-num-seqs 2
+  --max-num-seqs 2 \
+  --default-chat-template-kwargs '{"enable_thinking": true}' \
+  --reasoning-parser gemma4
 ```
+
+> `--default-chat-template-kwargs '{"enable_thinking": true}'` turns on Gemma's
+> built-in thinking mode: the chat template injects `<|think|>` at the start of
+> the first system turn so the model emits a
+> `<|channel>thought\n...<channel|>` reasoning block.
+>
+> `--reasoning-parser gemma4` makes vLLM split that block out of the answer and
+> surface it as `reasoning_content` instead of leaking it into `content`. The
+> FastAPI gateway already forwards `reasoning_content` to the frontend as
+> `thinking` events. Omit the parser flag (or the kwargs flag) to disable.
 
 The first execution of `vllm serve` downloads the model from Hugging Face.
 Later executions reuse the cached model.
 
-### Terminal 2: start FastAPI
+### Terminal 2: start FastAPI manually
 
 From the repository root:
 a
@@ -158,6 +171,122 @@ FastAPI automatically reloads when backend Python files change.
 
 > On Windows, vLLM Metal cannot run. Start only the FastAPI gateway and use the
 > `wandb` provider for development and testing.
+
+## On-demand Mac server (recommended)
+
+In this mode, the lightweight FastAPI gateway is always listening on port
+`8001`, while the memory-heavy vLLM process scales to zero:
+
+1. A request using `provider: "vllm"` arrives at the gateway.
+2. The gateway starts vLLM and waits for `/health` to become ready. The first
+   request therefore has a cold-start delay while the model loads.
+3. All active local-model requests share that vLLM process.
+4. Five minutes after the final local request completes, the gateway stops
+   vLLM and releases its model memory.
+
+WandB requests do not wake vLLM. A manually started vLLM process is detected
+but is never stopped by the gateway.
+
+Configure `backend/.env`:
+
+```dotenv
+VLLM_ON_DEMAND=true
+VLLM_EXECUTABLE=~/.venv-vllm-metal/bin/vllm
+VLLM_SERVE_MODEL=Legal-verse/InaVerdict-gemma-v2
+VLLM_IDLE_TIMEOUT_SECONDS=300
+VLLM_STARTUP_TIMEOUT_SECONDS=600
+CORS_ORIGINS=*
+```
+
+The checked-in launchd agent starts FastAPI at login, restarts it if it exits,
+and binds it to all network interfaces. The deployment script installs a
+runtime copy outside `Documents` because macOS privacy controls restrict
+background services there. Install it for the current Mac user:
+
+```bash
+cd /Users/galihmac/Documents/sinergi_app
+zsh backend/launchd/deploy.sh
+```
+
+Check the gateway and vLLM state:
+
+```bash
+curl http://127.0.0.1:8001/health
+launchctl print gui/$(id -u)/com.sinergi.gateway
+tail -f ~/Library/Application\ Support/SinergiServer/logs/gateway-error.log \
+  ~/Library/Application\ Support/SinergiServer/logs/gateway.log \
+  ~/Library/Application\ Support/SinergiServer/logs/vllm.log
+```
+
+When vLLM is asleep, `/health` still returns HTTP 200 because the gateway can
+accept and cold-start a request. Inspect `vllm_ready` and
+`vllm_on_demand.status` in its JSON response to distinguish `stopped`,
+`starting`, `ready`, and `external` states.
+
+### Requesting from a phone or another device
+
+The device must be on the same Wi-Fi/LAN as the Mac. The Mac is reachable by
+Bonjour hostname as `Galih-Mac-mini.local`; test from the other device with:
+
+```bash
+curl http://Galih-Mac-mini.local:8001/health
+
+curl http://Galih-Mac-mini.local:8001/api/chat \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "provider": "vllm",
+    "messages": [{"role": "user", "content": "Jelaskan unsur TPPO."}]
+  }'
+```
+
+If Bonjour names are unavailable on the client, find the Mac's LAN IP in
+**System Settings → Network → Wi-Fi/Ethernet → Details** and replace the
+hostname with that address, for example `http://192.168.1.20:8001`.
+
+The Mac must be awake and connected to the network. This machine is currently
+configured not to sleep while connected to AC power. If the macOS firewall
+asks whether Python/FastAPI may accept incoming connections, allow it for the
+trusted local network.
+
+### Access from any network (public HTTPS test URL)
+
+The deployment also runs a domainless Cloudflare Quick Tunnel. It exposes the
+gateway through a public HTTPS URL with no authentication. It is intended only
+for testing.
+
+Show the current URL on the Mac:
+
+```bash
+zsh backend/launchd/show-access.sh
+```
+
+Use it from a phone or any other network:
+
+```bash
+PUBLIC_URL=https://<current-url>.trycloudflare.com
+
+# Cold-start vLLM without holding a public request open.
+curl -X POST "$PUBLIC_URL/api/vllm/wake"
+
+# Poll until the JSON response contains: "vllm_ready": true
+curl "$PUBLIC_URL/health"
+
+# Then send the chat request.
+curl "$PUBLIC_URL/api/chat" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "provider": "vllm",
+    "messages": [{"role": "user", "content": "Jelaskan unsur TPPO."}]
+  }'
+```
+
+Because no domain is configured, this uses Cloudflare's development Quick
+Tunnel service. The random URL can change after the tunnel or Mac restarts, has
+no uptime guarantee, and does not support SSE. Use the non-streaming
+`POST /api/chat` endpoint remotely. Its proxy timeout can also be shorter than
+the model cold start, which is why remote clients should call
+`POST /api/vllm/wake`, poll `/health`, and then call `/api/chat`. Run
+`show-access.sh` again to retrieve the new URL after a restart.
 
 ## Backend endpoints
 

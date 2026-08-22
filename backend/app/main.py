@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import json
@@ -23,6 +24,11 @@ from pypdf import PdfReader
 from app.core.auth import get_current_user
 from app.core.firebase import db
 from app.rag import SECTION_LABELS, retrieve, sectionize
+from app.vllm_on_demand import (
+    VllmOnDemandConfig,
+    VllmOnDemandManager,
+    VllmStartupError,
+)
 
 DEFAULT_MODEL = os.getenv("MODEL_ID", "").strip()
 DEFAULT_WANDB_MODEL = os.getenv("WANDB_MODEL_ID", "").strip()
@@ -444,8 +450,15 @@ def flatten_content(content: str | list[ContentPart]) -> str:
 async def lifespan(app: FastAPI):
     app.state.http = httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS)
     app.state.rag_docs: dict[str, dict] = {}
-    yield
-    await app.state.http.aclose()
+    app.state.vllm_manager = VllmOnDemandManager(
+        VllmOnDemandConfig.from_env(VLLM_BASE_URL, MODEL_ID)
+    )
+    app.state.background_tasks: set[asyncio.Task] = set()
+    try:
+        yield
+    finally:
+        await app.state.vllm_manager.shutdown()
+        await app.state.http.aclose()
 
 
 app = FastAPI(
@@ -453,6 +466,8 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=env_list(
@@ -468,23 +483,80 @@ app.add_middleware(
 async def health(request: Request) -> JSONResponse:
     vllm = PROVIDER_BY_ID.get("vllm")
     base_url = vllm.base_url if vllm else VLLM_BASE_URL
-    model = await resolve_vllm_model(request.app.state.http) if vllm else MODEL_ID
-    try:
-        response = await request.app.state.http.get(f"{base_url}/health")
-        ready = response.is_success
-    except httpx.HTTPError:
+    manager: VllmOnDemandManager | None = getattr(
+        request.app.state, "vllm_manager", None
+    )
+    on_demand = (
+        manager.snapshot()
+        if manager
+        else {"enabled": False, "status": "disabled"}
+    )
+    if on_demand["status"] in {"stopped", "starting", "failed"}:
+        model = MODEL_ID
         ready = False
+    else:
+        model = await resolve_vllm_model(request.app.state.http) if vllm else MODEL_ID
+        try:
+            response = await request.app.state.http.get(f"{base_url}/health")
+            ready = response.is_success
+        except httpx.HTTPError:
+            ready = False
+    # A sleeping on-demand model is healthy: the lightweight gateway is ready
+    # to cold-start it when the next vLLM chat request arrives.
+    gateway_ready = ready or bool(on_demand["enabled"])
 
     return JSONResponse(
-        status_code=200 if ready else 503,
+        status_code=200 if gateway_ready else 503,
         content={
-            "status": "ready" if ready else "model_server_unavailable",
+            "status": "ready" if gateway_ready else "model_server_unavailable",
+            "vllm_ready": ready,
+            "vllm_on_demand": on_demand,
             "model": model,
             "vllm_base_url": base_url,
             "wandb_configured": bool(WANDB_API_KEY),
             "wandb_model": WANDB_MODEL_ID,
         },
     )
+
+
+async def _warm_local_model(app: FastAPI) -> None:
+    manager: VllmOnDemandManager = app.state.vllm_manager
+    acquired = False
+    try:
+        await manager.acquire(app.state.http)
+        acquired = True
+        _vllm_model_cache.clear()
+    finally:
+        if acquired:
+            await manager.release()
+
+
+def _finish_background_task(app: FastAPI, task: asyncio.Task) -> None:
+    app.state.background_tasks.discard(task)
+    # Retrieve the exception so asyncio does not emit an unhandled-task warning.
+    if not task.cancelled():
+        task.exception()
+
+
+@app.post("/api/vllm/wake")
+async def wake_vllm(request: Request) -> JSONResponse:
+    """Start vLLM asynchronously so public proxies do not time out."""
+    manager: VllmOnDemandManager | None = getattr(
+        request.app.state, "vllm_manager", None
+    )
+    if manager is None or not manager.config.enabled:
+        raise HTTPException(status_code=503, detail="On-demand vLLM is disabled.")
+
+    snapshot = manager.snapshot()
+    if snapshot["status"] in {"ready", "external"}:
+        return JSONResponse(status_code=200, content=snapshot)
+    if snapshot["status"] != "starting":
+        task = asyncio.create_task(_warm_local_model(request.app))
+        request.app.state.background_tasks.add(task)
+        task.add_done_callback(
+            lambda completed: _finish_background_task(request.app, completed)
+        )
+    return JSONResponse(status_code=202, content=manager.snapshot())
 
 
 @app.post("/auth/sync")
@@ -587,6 +659,28 @@ async def _prepare_chat(
     return provider, model_name, url, headers, messages
 
 
+async def _acquire_local_model(
+    body: ChatRequest, request: Request
+) -> VllmOnDemandManager | None:
+    """Cold-start vLLM when the selected provider is local."""
+    provider = PROVIDER_BY_ID.get(body.provider)
+    if provider is None or provider.kind != "vllm":
+        return None
+    manager: VllmOnDemandManager | None = getattr(
+        request.app.state, "vllm_manager", None
+    )
+    if manager is None:
+        return None
+    try:
+        await manager.acquire(request.app.state.http)
+    except VllmStartupError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    # The import-time discovery cache may contain the fallback model from when
+    # the model server was asleep. Force a fresh discovery after cold start.
+    _vllm_model_cache.clear()
+    return manager
+
+
 def _coerce_text(raw_content) -> str:
     """Normalize a chat completion ``content`` field to plain text."""
     if isinstance(raw_content, str):
@@ -618,46 +712,54 @@ def _raise_http_error(exc: Exception, provider_name: str) -> None:
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(body: ChatRequest, request: Request) -> ChatResponse:
-    provider, model_name, url, headers, messages = await _prepare_chat(body, request)
-    provider_name = provider.name
-
+    manager = await _acquire_local_model(body, request)
     try:
-        response = await request.app.state.http.post(
-            url,
-            headers=headers,
-            json={
-                "model": model_name,
-                "messages": messages,
-                "temperature": body.temperature,
-                "max_tokens": body.max_tokens,
-                "stream": False,
-            },
+        provider, model_name, url, headers, messages = await _prepare_chat(
+            body, request
         )
-        response.raise_for_status()
-    except httpx.HTTPError as exc:
-        _raise_http_error(exc, provider_name)
+        provider_name = provider.name
 
-    try:
-        data = response.json()
-        raw_content = data["choices"][0]["message"]["content"]
-        raw_thinking = data["choices"][0]["message"].get("reasoning_content")
-    except (KeyError, IndexError, TypeError, ValueError) as exc:
-        raise HTTPException(
-            status_code=502, detail=f"{provider_name} returned an invalid response."
-        ) from exc
+        try:
+            response = await request.app.state.http.post(
+                url,
+                headers=headers,
+                json={
+                    "model": model_name,
+                    "messages": messages,
+                    "temperature": body.temperature,
+                    "max_tokens": body.max_tokens,
+                    "stream": False,
+                },
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            _raise_http_error(exc, provider_name)
 
-    content = _coerce_text(raw_content)
-    if not content:
-        raise HTTPException(
-            status_code=502, detail=f"{provider_name} returned an empty response."
+        try:
+            data = response.json()
+            raw_content = data["choices"][0]["message"]["content"]
+            msg = data["choices"][0]["message"]
+            raw_thinking = msg.get("reasoning_content") or msg.get("reasoning")
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=502, detail=f"{provider_name} returned an invalid response."
+            ) from exc
+
+        content = _coerce_text(raw_content)
+        if not content:
+            raise HTTPException(
+                status_code=502, detail=f"{provider_name} returned an empty response."
+            )
+
+        thinking = _coerce_text(raw_thinking) or None
+        return ChatResponse(
+            message=Message(role="assistant", content=content, thinking=thinking),
+            model=data.get("model", provider.model),
+            provider=body.provider,
         )
-
-    thinking = _coerce_text(raw_thinking) or None
-    return ChatResponse(
-        message=Message(role="assistant", content=content, thinking=thinking),
-        model=data.get("model", provider.model),
-        provider=body.provider,
-    )
+    finally:
+        if manager is not None:
+            await manager.release()
 
 
 def _sse_event(payload: dict) -> str:
@@ -674,7 +776,15 @@ async def chat_stream(body: ChatRequest, request: Request) -> StreamingResponse:
     diakhiri ``{"type":"done","model":...}``. Bila model tidak menghasilkan
     reasoning trace, tidak ada event ``thinking`` yang dikirim.
     """
-    provider, model_name, url, headers, messages = await _prepare_chat(body, request)
+    manager = await _acquire_local_model(body, request)
+    try:
+        provider, model_name, url, headers, messages = await _prepare_chat(
+            body, request
+        )
+    except Exception:
+        if manager is not None:
+            await manager.release()
+        raise
     provider_name = provider.name
 
     async def event_stream():
@@ -721,6 +831,9 @@ async def chat_stream(body: ChatRequest, request: Request) -> StreamingResponse:
             yield _sse_event(
                 {"type": "error", "content": f"{provider_name} stream failed: {exc}"}
             )
+        finally:
+            if manager is not None:
+                await manager.release()
 
     return StreamingResponse(
         event_stream(),
@@ -815,8 +928,6 @@ async def rag_query(body: RagQueryRequest, request: Request) -> RagQueryResponse
             for hit in hits
         ],
     )
-
-
 @app.post("/api/library", response_model=LibraryItem)
 async def library_save(
     body: LibrarySaveRequest, user: dict = Depends(get_current_user)

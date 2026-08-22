@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -255,6 +256,38 @@ async def test_models_endpoint_lists_providers() -> None:
     assert wandb["supports_images"] is True
     vllm = next(p for p in payload["providers"] if p["id"] == "vllm")
     assert vllm["supports_images"] is False
+
+
+@pytest.mark.asyncio
+async def test_wake_endpoint_reports_already_ready_model() -> None:
+    class ReadyManager:
+        config = SimpleNamespace(enabled=True)
+
+        @staticmethod
+        def snapshot() -> dict:
+            return {
+                "enabled": True,
+                "status": "ready",
+                "active_requests": 0,
+                "idle_timeout_seconds": 300,
+            }
+
+    had_manager = hasattr(app.state, "vllm_manager")
+    previous_manager = getattr(app.state, "vllm_manager", None)
+    app.state.vllm_manager = ReadyManager()
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post("/api/vllm/wake")
+    finally:
+        if had_manager:
+            app.state.vllm_manager = previous_manager
+        else:
+            delattr(app.state, "vllm_manager")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ready"
 
 
 @pytest.mark.asyncio
