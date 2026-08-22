@@ -44,6 +44,21 @@ def env_list(name: str, default: str) -> list[str]:
     return [item.strip() for item in os.getenv(name, default).split(",") if item.strip()]
 
 
+def current_public_url(log_path: Path | None = None) -> str:
+    """Return the newest TryCloudflare URL written by the tunnel service."""
+    path = log_path or (
+        Path(__file__).resolve().parent.parent / "logs" / "tunnel-error.log"
+    )
+    try:
+        matches = re.findall(
+            r"https://[a-z-]+\.trycloudflare\.com",
+            path.read_text(encoding="utf-8"),
+        )
+    except OSError:
+        return ""
+    return matches[-1] if matches else ""
+
+
 def wandb_key_from_models_md() -> str:
     """Read WANDB_API_KEY embedded in backend/models.md (dev/test convenience)."""
     models_md = Path(__file__).resolve().parent.parent / "models.md"
@@ -454,6 +469,15 @@ async def lifespan(app: FastAPI):
         VllmOnDemandConfig.from_env(VLLM_BASE_URL, MODEL_ID)
     )
     app.state.background_tasks: set[asyncio.Task] = set()
+    public_url = current_public_url()
+    if public_url:
+        print(f"Public API URL: {public_url}", flush=True)
+    else:
+        print(
+            "Public API URL is not ready yet; run: "
+            "zsh backend/launchd/show-access.sh",
+            flush=True,
+        )
     try:
         yield
     finally:

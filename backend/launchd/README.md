@@ -17,6 +17,10 @@ Install or refresh it for the current macOS user:
 zsh backend/launchd/deploy.sh
 ```
 
+The deployment waits for Cloudflare to allocate the new random URL and prints
+`Public API URL: https://...trycloudflare.com` before it exits. FastAPI also
+writes the current URL to `gateway.log` during application startup.
+
 The script copies only the backend runtime files (including the local `.env`
 and Firebase credential) into
 `~/Library/Application Support/SinergiServer`, installs its production Python

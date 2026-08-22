@@ -251,6 +251,7 @@ trusted local network.
 ### Access from any network (public HTTPS test URL)
 
 The deployment also runs a domainless Cloudflare Quick Tunnel. It exposes the
+
 gateway through a public HTTPS URL with no authentication. It is intended only
 for testing.
 
@@ -259,6 +260,9 @@ Show the current URL on the Mac:
 ```bash
 zsh backend/launchd/show-access.sh
 ```
+
+`zsh backend/launchd/deploy.sh` also prints the newly allocated URL every time
+it starts/restarts the public tunnel. The FastAPI startup log repeats the URL.
 
 Use it from a phone or any other network:
 

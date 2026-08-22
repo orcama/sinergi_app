@@ -14,6 +14,7 @@ from app.main import (
     DEFAULT_SYSTEM_PROMPT,
     MODEL_ID,
     WANDB_MODEL_ID,
+    current_public_url,
     extract_pdf_text,
     flatten_content,
     load_providers,
@@ -342,6 +343,20 @@ def test_extract_pdf_text_from_data_url() -> None:
 def test_extract_pdf_text_handles_garbage() -> None:
     assert extract_pdf_text("not-a-real-pdf") == ""
     assert extract_pdf_text("data:application/pdf;base64,!!invalid!!") == ""
+
+
+def test_current_public_url_returns_latest_tunnel_url(tmp_path) -> None:
+    tunnel_log = tmp_path / "tunnel-error.log"
+    tunnel_log.write_text(
+        "old https://first-example-name.trycloudflare.com\n"
+        "new https://latest-example-name.trycloudflare.com\n",
+        encoding="utf-8",
+    )
+
+    assert (
+        current_public_url(tunnel_log)
+        == "https://latest-example-name.trycloudflare.com"
+    )
 
 
 @pytest.mark.asyncio
