@@ -46,9 +46,12 @@ def env_list(name: str, default: str) -> list[str]:
 
 def current_public_url(log_path: Path | None = None) -> str:
     """Return the newest TryCloudflare URL written by the tunnel service."""
-    path = log_path or (
-        Path(__file__).resolve().parent.parent / "logs" / "tunnel-error.log"
-    )
+    configured_path = os.getenv("PUBLIC_TUNNEL_LOG", "").strip()
+    path = log_path
+    if path is None and configured_path:
+        path = Path(os.path.expanduser(configured_path))
+    if path is None:
+        path = Path(__file__).resolve().parent.parent / "logs" / "tunnel-error.log"
     try:
         matches = re.findall(
             r"https://[a-z-]+\.trycloudflare\.com",
