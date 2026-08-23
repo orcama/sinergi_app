@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Image from "next/image";
 import { useRouter } from "next/navigation";
@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { AuthGuard } from "@/lib/components/auth/AuthGuard";
 import { useAuth } from "@/lib/auth-context";
+import { createProject, deleteProject, listProjects } from "@/lib/projects-api";
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -45,22 +46,7 @@ function formatDate(isoString: string): string {
   });
 }
 
-function createProjectId(): string {
-  const cryptoObj = typeof crypto !== "undefined" ? (crypto as Crypto) : undefined;
-  return cryptoObj?.randomUUID
-    ? cryptoObj.randomUUID()
-    : `proj-${Math.random().toString(36).slice(2)}`;
-}
 
-/* ------------------------------------------------------------------ */
-/* Mock data                                                           */
-/* ------------------------------------------------------------------ */
-
-const DUMMY_PROJECTS: Project[] = [
-  { id: "p1", name: "Project 1", emoji: "📁", createdBy: "you", modifiedAt: "2026-08-07T09:00:00.000Z" },
-  { id: "p2", name: "Project 2", emoji: "📁", createdBy: "shared", modifiedAt: "2026-08-07T10:00:00.000Z" },
-  { id: "p3", name: "Project 3", emoji: "📁", createdBy: "you", modifiedAt: "2026-08-07T11:00:00.000Z" },
-];
 
 /* ------------------------------------------------------------------ */
 /* Sub-components                                                      */
@@ -458,7 +444,10 @@ function ProjectPage() {
   const [activeFilter, setActiveFilter] = useState<"all" | "created" | "shared">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [projects, setProjects] = useState<Project[]>(DUMMY_PROJECTS);
+  const [projects, setProjects] = useState<Project[]>([]);
+  useEffect(() => {
+    listProjects().then(setProjects).catch((error) => console.error("Failed to load projects", error));
+  }, []);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [openToken, setOpenToken] = useState(0);
 
@@ -498,26 +487,18 @@ function ProjectPage() {
     });
   };
 
-  const handleCreateProject = (name: string) => {
-    const newProject: Project = {
-      id: createProjectId(),
-      name,
-      emoji: "📁",
-      createdBy: "you",
-      modifiedAt: new Date().toISOString(),
-    };
-    setProjects((prev) => [newProject, ...prev]);
-    setIsModalOpen(false);
+  const handleCreateProject = async (name: string) => {
+    try { const project = await createProject(name); setProjects((prev) => [project, ...prev]); setIsModalOpen(false); }
+    catch (error) { console.error('Failed to create project', error); }
   };
 
-  const handleDeleteProject = (id: string) => {
-    if (!window.confirm("Hapus project ini?")) return;
-    setProjects((prev) => prev.filter((p) => p.id !== id));
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
+  const handleDeleteProject = async (id: string) => {
+    if (!window.confirm('Hapus project ini?')) return;
+    try {
+      await deleteProject(id);
+      setProjects((prev) => prev.filter((p) => p.id !== id));
+      setSelectedIds((prev) => { const next = new Set(prev); next.delete(id); return next; });
+    } catch (error) { console.error('Failed to delete project', error); }
   };
 
   const handleOpenProject = (id: string) => {

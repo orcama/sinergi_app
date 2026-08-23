@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+﻿from fastapi import APIRouter, Depends, Query
 
 from app.core.auth import get_current_user
 from app.controllers.library_controller import library_delete, library_list, library_save
@@ -13,8 +13,8 @@ async def library_save_route(body: LibrarySaveRequest, user: dict = Depends(get_
 
 
 @router.get("/api/library")
-async def library_list_route(user: dict = Depends(get_current_user)):
-    return library_list(user)
+async def library_list_route(project_id: str | None = Query(default=None), user: dict = Depends(get_current_user)):
+    return library_list(user, project_id)
 
 
 @router.delete("/api/library/{file_id}")

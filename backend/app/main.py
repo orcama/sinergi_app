@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
@@ -11,6 +11,7 @@ from app.middleware.cors import register_cors
 from app.routes.auth_routes import router as auth_router
 from app.routes.chat_routes import router as chat_router
 from app.routes.library_routes import router as library_router
+from app.routes.project_routes import router as project_router
 from app.routes.rag_routes import router as rag_router
 from app.routes.system_routes import router as system_router
 from app.vllm_on_demand import VllmOnDemandConfig, VllmOnDemandManager
@@ -38,6 +39,7 @@ app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(rag_router)
 app.include_router(library_router)
+app.include_router(project_router)
 
 # Compatibility exports for existing backend consumers and tests.
 from app.config import (  # noqa: E402,F401

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from typing import Annotated, Literal
 
@@ -107,6 +107,7 @@ class LibrarySaveRequest(BaseModel):
     text: str = Field(default="", max_length=1_000_000)
     token_count: int = Field(default=0, ge=0)
     chat_id: str | None = Field(default=None, max_length=255)
+    project_id: str | None = Field(default=None, max_length=255)
 
 
 class LibraryItem(BaseModel):
@@ -119,3 +120,22 @@ class LibraryItem(BaseModel):
     chat_id: str | None
     storage_path: str
     token_count: int
+
+class ProjectCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    emoji: str | None = Field(default=None, max_length=16)
+
+class ProjectUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    emoji: str | None = Field(default=None, max_length=16)
+    instructions: str | None = Field(default=None, max_length=50_000)
+
+class ProjectItem(BaseModel):
+    id: str
+    name: str
+    emoji: str | None
+    created_by: str
+    modified_at: str
+    chat_ids: list[str]
+    file_ids: list[str]
+    instructions: str | None = None

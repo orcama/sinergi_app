@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Image from "next/image";
 import { useParams, useRouter } from "next/navigation";
@@ -22,6 +22,7 @@ import {
 import type { LibraryFile } from "@/lib/types";
 import { AuthGuard } from "@/lib/components/auth/AuthGuard";
 import { useAuth } from "@/lib/auth-context";
+import { getProject, listProjectFiles, updateProject, deleteProject } from "@/lib/projects-api";
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -69,53 +70,6 @@ function formatFileSize(bytes: number): string {
   }
   return `${bytes} B`;
 }
-
-/* ------------------------------------------------------------------ */
-/* Mock data                                                           */
-/* ------------------------------------------------------------------ */
-
-const DUMMY_PROJECTS: Project[] = [
-  {
-    id: "p1",
-    name: "Project 1",
-    emoji: "📁",
-    createdBy: "you",
-    modifiedAt: "2026-08-07T09:00:00.000Z",
-    chatIds: ["c1", "c2"],
-    fileIds: ["f1", "f2"],
-    instructions: "Selalu jawab dalam Bahasa Indonesia dan sertakan referensi pasal yang relevan.",
-  },
-  {
-    id: "p2",
-    name: "Project 2",
-    emoji: "📁",
-    createdBy: "shared",
-    modifiedAt: "2026-08-07T10:00:00.000Z",
-    chatIds: [],
-    fileIds: [],
-  },
-  {
-    id: "p3",
-    name: "Project 3",
-    emoji: "📁",
-    createdBy: "you",
-    modifiedAt: "2026-08-07T11:00:00.000Z",
-    chatIds: ["c3"],
-    fileIds: ["f3"],
-  },
-];
-
-const DUMMY_CHATS: ChatSummary[] = [
-  { id: "c1", title: "Jelaskan isi Putusan Nomor 1/Pid.Sus/2026/PN.KPN", preview: "Berdasarkan analisis terhadap perkara tersebut, berikut ringkasan...", updatedAt: "2026-08-07T09:00:00.000Z", projectId: "p1" },
-  { id: "c2", title: "Apa saja unsur tindak pidana perdagangan orang (TPPO)?", preview: "Terima kasih atas pertanyaan Anda. Berdasarkan pengetahuan hukum...", updatedAt: "2026-08-07T09:30:00.000Z", projectId: "p1" },
-  { id: "c3", title: "Rangkum pertimbangan hakim dalam putusan pidana terbaru", preview: "Putusan ini merupakan perkara pidana yang telah diputus...", updatedAt: "2026-08-07T11:00:00.000Z", projectId: "p3" },
-];
-
-const DUMMY_FILES: LibraryFile[] = [
-  { id: "f1", name: "Putusan_Tipikor_2026.pdf", type: "document", extension: "pdf", modifiedAt: "2026-08-07T09:30:00.000Z", sizeInBytes: 2_400_000_000, chatId: "c1", projectId: "p1" },
-  { id: "f2", name: "SK_KPN_2026.docx", type: "document", extension: "docx", modifiedAt: "2026-08-01T14:20:00.000Z", sizeInBytes: 243_000_000, chatId: "c1", projectId: "p1" },
-  { id: "f3", name: "Dokumen_Sidang.png", type: "image", extension: "png", modifiedAt: "2026-07-28T11:05:00.000Z", sizeInBytes: 190_000, chatId: "c3", projectId: "p3" },
-];
 
 /* ------------------------------------------------------------------ */
 /* Sidebar                                                             */
@@ -603,7 +557,7 @@ function LibraryTableRow({
             {file.name}
           </div>
           <div className="text-xs text-zinc-400 sm:hidden">
-            {formatDate(file.modifiedAt)} · {formatFileSize(file.sizeInBytes)}
+            {formatDate(file.modifiedAt)} Â· {formatFileSize(file.sizeInBytes)}
           </div>
         </div>
       </div>
@@ -686,9 +640,10 @@ function LibraryTable({
 }
 
 function ProjectFilesTab({ projectId }: { projectId: string }) {
-  const [files, setFiles] = useState<LibraryFile[]>(() =>
-    DUMMY_FILES.filter((f) => f.projectId === projectId)
-  );
+  const [files, setFiles] = useState<LibraryFile[]>([]);
+  useEffect(() => {
+    listProjectFiles(projectId).then(setFiles).catch((error) => console.error('Failed to load project files', error));
+  }, [projectId]);
   const [activeFilter, setActiveFilter] = useState<"all" | "images" | "documents">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -812,16 +767,15 @@ function ProjectDetailPage() {
 
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("chats");
-  const [projects, setProjects] = useState<Project[]>(DUMMY_PROJECTS);
+  const [project, setProject] = useState<Project | null>(null);
+
+  useEffect(() => {
+    getProject(projectId).then(setProject).catch((error) => console.error("Failed to load project", error));
+  }, [projectId]);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const project = projects.find((p) => p.id === projectId) ?? null;
-
-  const projectChats = useMemo(
-    () => DUMMY_CHATS.filter((c) => c.projectId === projectId),
-    [projectId]
-  );
+  const projectChats: ChatSummary[] = project?.chatIds?.map((id) => ({ id, title: id, preview: '', updatedAt: project.modifiedAt, projectId })) ?? [];
 
   const showToast = (msg: string) => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -854,20 +808,19 @@ function ProjectDetailPage() {
     );
   }
 
-  const handleRename = (name: string) => {
-    setProjects((prev) =>
-      prev.map((p) => (p.id === project.id ? { ...p, name } : p))
-    );
+  const handleRename = async (name: string) => {
+    try { setProject(await updateProject(project.id, { name })); }
+    catch (error) { console.error('Failed to rename project', error); }
   };
 
   const handleShare = () => {
     showToast("Fitur share segera hadir");
   };
 
-  const handleDeleteProject = () => {
-    if (!window.confirm("Hapus project ini?")) return;
-    setProjects((prev) => prev.filter((p) => p.id !== project.id));
-    router.push("/project");
+  const handleDeleteProject = async () => {
+    if (!window.confirm('Hapus project ini?')) return;
+    try { await deleteProject(project.id); router.push('/project'); }
+    catch (error) { console.error('Failed to delete project', error); }
   };
 
   const handleNewChat = () => {
@@ -878,11 +831,13 @@ function ProjectDetailPage() {
     router.push(`/chat?sessionId=${chatId}`);
   };
 
-  const handleSaveInstructions = (text: string) => {
-    setProjects((prev) =>
-      prev.map((p) => (p.id === project.id ? { ...p, instructions: text } : p))
-    );
-    showToast("Instructions saved");
+  const handleSaveInstructions = async (text: string) => {
+    try {
+      setProject(await updateProject(project.id, { instructions: text }));
+      showToast('Instructions saved');
+    } catch (error) {
+      console.error('Failed to save instructions', error);
+    }
   };
 
   return (
