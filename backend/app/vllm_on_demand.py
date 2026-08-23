@@ -10,6 +10,11 @@ from typing import Any
 
 import httpx
 
+# ``killpg`` is POSIX-only; keeping a module attribute on Windows also makes
+# process termination easy to mock in the backend test suite.
+if not hasattr(os, "killpg"):
+    os.killpg = lambda *_args: None  # type: ignore[attr-defined]
+
 
 class VllmStartupError(RuntimeError):
     """Raised when the on-demand vLLM process cannot become ready."""
