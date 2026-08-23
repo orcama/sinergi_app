@@ -26,7 +26,7 @@ REQUEST_TIMEOUT_SECONDS = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "300"))
 WANDB_BASE_URL = os.getenv("WANDB_BASE_URL", "https://api.inference.wandb.ai").rstrip("/")
 WANDB_MODEL_ID = os.getenv("WANDB_MODEL_ID", DEFAULT_WANDB_MODEL) or "MiniMaxAI/MiniMax-M3"
 DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "vllm")
-LOCAL_CONTEXT_WINDOW = 128_000
+LOCAL_CONTEXT_WINDOW = int(os.getenv("VLLM_MAX_MODEL_LEN", "128000"))
 _vllm_model_cache: dict[str, float | str] = {}
 _VLLM_DISCOVERY_TTL = float(os.getenv("VLLM_DISCOVERY_TTL", "30"))
 

@@ -3,21 +3,51 @@ from __future__ import annotations
 import base64
 import io
 import re
+import unicodedata
+from collections import Counter
 
 from pypdf import PdfReader
 
 from app.schemas import ContentPart, ImageUrlPart, PdfPart, TextPart
 
 
-def extract_pdf_text(data: str, max_chars: int = 32_000, collapse: bool = True) -> str:
+def clean_pdf_text(text: str) -> str:
+    """Clean common PDF extraction artifacts while preserving legal headings."""
+    text = unicodedata.normalize("NFKC", text)
+    text = text.replace("\u00ad", "").replace("\u00a0", " ").replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"(?<=\w)-\n(?=\w)", "", text)
+    raw_lines = [re.sub(r"[ \t]+", " ", line).strip() for line in text.split("\n")]
+    meaningful = [line.casefold() for line in raw_lines if line and len(line) <= 140]
+    repeated = {line for line, count in Counter(meaningful).items() if count >= 3}
+    cleaned: list[str] = []
+    for line in raw_lines:
+        if not line:
+            if cleaned and cleaned[-1] != "":
+                cleaned.append("")
+            continue
+        if re.fullmatch(r"[-–—]?\s*\d+\s*[-–—]?", line):
+            continue
+        if re.match(r"^(?:halaman|page)\s+\d+\b", line, re.IGNORECASE):
+            continue
+        if line.casefold() in repeated and len(line) < 140:
+            continue
+        cleaned.append(line)
+    while cleaned and cleaned[-1] == "":
+        cleaned.pop()
+    return "\n".join(cleaned).strip()
+
+
+def extract_pdf_text(data: str, max_chars: int | None = 32_000, collapse: bool = True) -> str:
     if data.startswith("data:") and "," in data:
         data = data.split(",", 1)[1]
     try:
         raw = base64.b64decode(data)
-        text = "\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(raw)).pages)
+        text = "\n\f\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(raw)).pages)
     except Exception:
         return ""
-    return (" ".join(text.split()) if collapse else text)[:max_chars]
+    cleaned = clean_pdf_text(text)
+    result = " ".join(cleaned.split()) if collapse else cleaned
+    return result if max_chars is None else result[:max_chars]
 
 
 def estimate_tokens(text: str) -> int:

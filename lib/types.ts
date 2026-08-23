@@ -32,6 +32,7 @@ export interface Attachment {
   file?: File; // file asli untuk proses RAG ingest / kirim ke model
   extractedText?: string; // teks hasil ekstraksi PDF dari backend
   tokenCount?: number; // jumlah token teks hasil ekstraksi (dari backend)
+  libraryFileId?: string; // id dokumen yang sudah dibersihkan dan di-embed di backend
 }
 
 export interface ChatMessage {

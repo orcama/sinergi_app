@@ -343,7 +343,10 @@ async function requestRagResponse(
     if (attachment.status !== "done") {
       throw new Error(`File "${attachment.fileName}" belum siap untuk diproses.`);
     }
-    if (attachment.file) {
+    if (attachment.libraryFileId) {
+      docIds.push(attachment.libraryFileId);
+      ingestedNames.push(attachment.fileName);
+    } else if (attachment.file) {
       const doc = await ingestPdf(attachment.file);
       docIds.push(doc.id);
       ingestedNames.push(doc.name);
@@ -362,11 +365,13 @@ async function requestRagResponse(
   const context = hitsToContext(hits);
   const sources = hitsToSources(hits);
 
+  // This is only a last-resort path when retrieval returned no hit. Never
+  // silently prefix-slice the uploaded source: the complete PDF is persisted
+  // in the backend and should either be retrieved or fail visibly.
   const fallbackText = attachments
     .map((attachment) => attachment.extractedText?.trim() ?? "")
     .filter(Boolean)
-    .join("\n\n")
-    .slice(0, 32_000);
+    .join("\n\n");
 
   const message = await requestAIResponse(
     conversation,
@@ -1723,7 +1728,14 @@ if (pending.length === 0) return;
             token_count,
             activeSessionId ?? undefined
           ).then(
-            () => {
+            (record) => {
+              setAttachments((prev) =>
+                prev.map((att) =>
+                  att.id === attachment.id
+                    ? { ...att, libraryFileId: record.id }
+                    : att
+                )
+              );
               console.log("[library] tersimpan:", attachment.fileName);
             },
             (err) => {

@@ -54,9 +54,11 @@ class VllmOnDemandConfig:
             "--port",
             "8000",
             "--max-model-len",
-            os.getenv("VLLM_MAX_MODEL_LEN", "12000"),
+            os.getenv("VLLM_MAX_MODEL_LEN", "128000"),
             "--max-num-seqs",
-            os.getenv("VLLM_MAX_NUM_SEQS", "2"),
+            os.getenv("VLLM_MAX_NUM_SEQS", "1"),
+            "--max-num-batched-tokens",
+            os.getenv("VLLM_MAX_NUM_BATCHED_TOKENS", "512"),
         ]
         if _env_bool("VLLM_ENABLE_THINKING", True):
             command.extend(
@@ -92,6 +94,15 @@ class VllmOnDemandConfig:
                 os.path.expanduser(os.getenv("VLLM_LOG_PATH", str(default_log)))
             ),
         )
+
+    @staticmethod
+    def child_environment() -> dict[str, str]:
+        """Return the explicit Metal settings required by the child server."""
+        environment = os.environ.copy()
+        environment.setdefault("VLLM_METAL_USE_PAGED_ATTENTION", "1")
+        environment.setdefault("VLLM_METAL_MEMORY_FRACTION", "0.90")
+        environment.setdefault("VLLM_MLX_DEVICE", "gpu")
+        return environment
 
 
 class VllmOnDemandManager:
@@ -164,6 +175,7 @@ class VllmOnDemandManager:
                 stdout=self._log_file,
                 stderr=asyncio.subprocess.STDOUT,
                 start_new_session=True,
+                env=self.config.child_environment(),
             )
         except OSError as exc:
             self._close_log()

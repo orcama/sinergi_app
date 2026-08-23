@@ -16,7 +16,7 @@ function truncateTitle(text: string, max = 24): string {
 }
 
 const DEFAULT_CONTEXT_LIMITS: Record<"local" | "deployed", number> = {
-  local: 128_000,
+  local: 12_000,
   deployed: 262_000,
 };
 

@@ -304,18 +304,21 @@ SECTION_ANCHORS: dict[str, list[str]] = {
     ],
     "ahli": [
         r"^menimbang\b(?:(?!\n\s*menimbang\b).)*?\b(?:mengajukan\s+ahli|saksi\s+ahli|pendapat\s+ahli)\b",
+        r"^menimbang\b(?:(?!\n\s*menimbang\b).)*?\b(?:keterangan\s+ahli|tenaga\s+ahli|ahli\s+kedokteran)\b",
         r"^saksi\s+ahli\b",
         r"^mengajukan\s+ahli\b",
     ],
     "terdakwa": [
         r"^menimbang\b(?:(?!\n\s*menimbang\b).)*?\b(?:terdakwa|anak)\s+di\s+persidangan\b",
         r"^menimbang\b(?:(?!\n\s*menimbang\b).)*?\b(?:terdakwa|anak)\s+memberikan\s+keterangan\b",
+        r"^menimbang\b(?:(?!\n\s*menimbang\b).)*?\b(?:terdakwa|anak)\b.*?\bpada\s+pokoknya\s+menerangkan\b",
         r"^keterangan\s+(?:terdakwa|anak)\b",
     ],
     "surat": [
         r"^-\s*berkas\s+perkara\b",
         r"^berkas\s+perkara\s+dan\s+surat",
         r"^menimbang\b(?:(?!\n\s*menimbang\b).)*?\bbukti\s+surat\b",
+        r"^menimbang\b(?:(?!\n\s*menimbang\b).)*?\b(?:mengajukan\s+surat|dibacakan\s+visum)\b",
         r"^bukti\s+surat\b",
         r"^surat\s*:\b",
         r"^menimbang\b(?:(?!\n\s*menimbang\b).)*?\bsurat\s*-\s*surat\b",

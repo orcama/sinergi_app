@@ -247,6 +247,26 @@ def _retrieve_from_sections(sections: dict, query: str, top_k: int = 1):
     return out[0]
 
 
+def _retrieve_candidates(sections: dict, query: str, top_k: int = 3) -> list[dict]:
+    """Return all available ranked section candidates for recall@K scoring."""
+    candidates = map_query_to_sections(query)
+    out = []
+    from app.rag.sections import SECTION_LABELS, SECTION_ORDER
+    for key, score, reason in candidates:
+        span = sections.get(key, "")
+        if span and span.strip():
+            out.append({"key": key, "label": SECTION_LABELS.get(key, key), "text": span.strip(), "score": score, "reason": reason})
+        if len(out) >= top_k:
+            break
+    if not out:
+        for key in SECTION_ORDER:
+            span = sections.get(key, "")
+            if span and span.strip():
+                out.append({"key": key, "label": SECTION_LABELS.get(key, key), "text": span.strip(), "score": 0.0, "reason": "fallback"})
+                break
+    return out
+
+
 def ground_truth_text(sections_json: dict) -> dict[str, str]:
     """Flatten ground truth (a section may hold several quotes) to plain text."""
     out: dict[str, str] = {}
@@ -263,6 +283,7 @@ def evaluate(
     threshold: float = 0.5,
     use_all_templates: bool = False,
     verbose: bool = False,
+    top_k: int = 1,
 ) -> dict:
     per_feature: dict[str, dict] = {
         k: {"total": 0, "mapped": 0, "correct": 0, "f1_sum": 0.0}
@@ -298,14 +319,16 @@ def evaluate(
                     per_feature[key]["mapped"] += 1
                     totals["mapped"] += 1
 
-                top = retrieved_cache.get(q)
-                if top is None:
-                    top = _retrieve_from_sections(sections, q, top_k=1)
-                    retrieved_cache[q] = top
+                tops = retrieved_cache.get(q)
+                if tops is None:
+                    tops = _retrieve_candidates(sections, q, top_k=top_k)
+                    retrieved_cache[q] = tops
+                top = tops[0]
                 correct = False
                 f1 = 0.0
-                if top["key"] == key:
-                    f1 = _tok_f1(top["text"], gt_text)
+                matching = [candidate for candidate in tops if candidate["key"] == key]
+                if matching:
+                    f1 = max(_tok_f1(candidate["text"], gt_text) for candidate in matching)
                     correct = f1 >= threshold
                 per_feature[key]["correct"] += int(correct)
                 totals["correct"] += int(correct)
@@ -370,6 +393,7 @@ def main() -> None:
     ap.add_argument("--all-templates", action="store_true")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--verbose", action="store_true")
+    ap.add_argument("--top-k", type=int, default=1)
     args = ap.parse_args()
 
     df = pd.read_parquet(args.parquet)
@@ -380,6 +404,7 @@ def main() -> None:
         threshold=args.threshold,
         use_all_templates=args.all_templates,
         verbose=args.verbose,
+        top_k=max(1, args.top_k),
     )
     _print_report(result)
     if args.verbose:

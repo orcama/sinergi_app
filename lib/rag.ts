@@ -87,9 +87,12 @@ export async function queryRag(
   topK = 3,
   text?: string
 ): Promise<RagHit[]> {
+  const user = auth.currentUser;
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (user) headers.Authorization = `Bearer ${await user.getIdToken()}`;
   const response = await fetch(`${RAG_API_URL}/api/rag/query`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({
       question,
       document_ids: documentIds,
@@ -131,6 +134,11 @@ export interface LibraryFileRecord {
   chat_id: string | null;
   storage_path: string;
   token_count: number;
+  project_id?: string | null;
+  embedding_status?: "pending" | "ready" | "failed";
+  embedding_model?: string | null;
+  embedding_dimensions?: number | null;
+  embedding_error?: string | null;
 }
 
 function toDataUrlLibrary(file: File): Promise<string> {

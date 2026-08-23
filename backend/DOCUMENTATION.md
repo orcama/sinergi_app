@@ -17,7 +17,7 @@ The default configuration provides two providers:
 
 | Provider id | Name | Model | Supports images | Requires |
 | --- | --- | --- | --- | --- |
-| `vllm` | vLLM (Local) | `mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-4bit` | No | Apple Silicon Mac + vLLM Metal |
+| `vllm` | vLLM (Local) | `Legal-verse/InaVerdict-gemma-v2` (Gemma 4 E2B-derived checkpoint) | No | Apple Silicon Mac + vLLM Metal |
 | `wandb` | WandB (MiniMax M3) | `MiniMaxAI/MiniMax-M3` (hosted, multimodal) | Yes | `WANDB_API_KEY` |
 
 The WandB provider serves the multimodal model documented in `backend/models.md`
@@ -48,14 +48,14 @@ entry:
 - `DEFAULT_PROVIDER` selects the default when the frontend does not pick one; if
   it is not among the configured ids, the first provider is used.
 
-The local vLLM model is:
+The local vLLM model is the trained legal checkpoint:
 
 ```text
-mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-4bit
+Legal-verse/InaVerdict-gemma-v2
 ```
 
-It is an MLX 4-bit conversion of
-`deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B`.
+It follows the Gemma 4 E2B architecture; the checkpoint's training and legal
+behavior remain specific to Legal-verse.
 
 ## Requirements
 
@@ -79,7 +79,7 @@ curl -fsSL https://raw.githubusercontent.com/vllm-project/vllm-metal/main/instal
 
 The official installer uses `uv` and creates `~/.venv-vllm-metal`. It installs
 vLLM, the Metal plugin, MLX, and their dependencies. It does not download the
-DeepSeek model.
+Gemma 4 checkpoint.
 
 ### 2. Install the FastAPI dependencies
 
@@ -105,7 +105,7 @@ cp .env.example .env
 Default configuration:
 
 ```dotenv
-MODEL_ID=mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-4bit
+MODEL_ID=Legal-verse/InaVerdict-gemma-v2
 VLLM_BASE_URL=http://127.0.0.1:8000
 CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
 REQUEST_TIMEOUT_SECONDS=300
@@ -136,11 +136,32 @@ vllm serve Legal-verse/InaVerdict-gemma-v2 \
   --served-model-name Legal-verse/InaVerdict-gemma-v2 \
   --host 127.0.0.1 \
   --port 8000 \
-  --max-model-len 12000 \
-  --max-num-seqs 2 \
+  --max-model-len 128000 \
+  --max-num-seqs 1 \
+  --max-num-batched-tokens 512 \
   --default-chat-template-kwargs '{"enable_thinking": true}' \
   --reasoning-parser gemma4
 ```
+
+`Legal-verse/InaVerdict-gemma-v2` is the application checkpoint based on
+the Gemma 4 E2B architecture reported by the checkpoint configuration; it is
+not a DeepSeek or Gemma 3 deployment. Its config reports
+`max_position_embeddings: 131072`, so 128,000 is within the model-native limit.
+
+For a 16 GB M4, the serving profile deliberately uses one sequence and a
+512-token scheduler batch. This trades prefill throughput for the requested
+long context and lower activation pressure. Set
+`VLLM_METAL_USE_PAGED_ATTENTION=1` and
+`VLLM_METAL_MEMORY_FRACTION=0.90` in the vLLM shell. On current Metal paged
+attention, the generic `--gpu-memory-utilization` flag is not the controlling
+KV-cache setting; the Metal-specific environment variable is.
+
+The checkpoint is an approximately 10.25 GB FP16 file, so 128K is a serving
+target, not a promise that every macOS process state will have enough free
+unified memory. If vLLM rejects startup with an insufficient Metal KV-cache
+budget, the exact machine is out of headroom at this precision; do not raise
+the context beyond 128K or enable concurrent sequences. A quantized checkpoint
+or a runtime with compressed KV cache is then required.
 
 > `--default-chat-template-kwargs '{"enable_thinking": true}'` turns on Gemma's
 > built-in thinking mode: the chat template injects `<|think|>` at the start of
@@ -154,6 +175,23 @@ vllm serve Legal-verse/InaVerdict-gemma-v2 \
 
 The first execution of `vllm serve` downloads the model from Hugging Face.
 Later executions reuse the cached model.
+
+To verify the actual target machine rather than only the command configuration,
+run this on the native arm64 16 GB M4 Mac after installing vLLM Metal:
+
+```bash
+zsh backend/scripts/smoke_vllm_metal_128k.zsh
+```
+
+Add `VLLM_SMOKE_PROBE=1` to send a real approximately 125K-token request with
+one output token. This is slower and more memory-intensive, but it is the
+strongest available smoke check for long-context acceptance.
+
+The smoke test starts the exact checkpoint on port 18000, waits for `/health`,
+checks `/v1/models`, and prints the startup log path. It terminates only the
+process it started. A successful repository test run cannot substitute for
+this hardware check because Metal KV allocation depends on free unified memory
+at launch.
 
 ### Terminal 2: start FastAPI manually
 
@@ -206,6 +244,16 @@ background services there. Install it for the current Mac user:
 ```bash
 cd /Users/galihmac/Documents/sinergi_app
 zsh backend/launchd/deploy.sh
+```
+
+The default deployment is an interactive development launcher: it keeps the
+Cloudflare tunnel under `launchd`, then opens separate Terminal windows for
+the frontend, FastAPI dev server, and vLLM so each process can be traced live.
+It stops the managed gateway first to avoid a second process binding port
+8001. For the original background-only launchd behavior, use:
+
+```bash
+zsh backend/launchd/deploy.sh --managed
 ```
 
 Check the gateway and vLLM state:
@@ -301,6 +349,36 @@ the model cold start, which is why remote clients should call
 | `POST http://127.0.0.1:8001/api/chat` | Sends a conversation to a model provider |
 | `GET http://127.0.0.1:8001/docs` | Interactive FastAPI documentation |
 | `GET http://127.0.0.1:8000/health` | Direct vLLM health check |
+
+### PDF cleanup and Firestore vector search
+
+When a PDF is uploaded to the library, the backend normalizes common PDF
+extraction artifacts, removes repeated page headers and page numbers, keeps
+legal section boundaries, and stores the cleaned text. It then sectionizes the
+document using the canonical features in `app/rag/sections.py`, chunks long
+sections, and stores 384-dimensional normalized vectors in the
+`document_chunks` collection.
+
+The original PDF and the complete cleaned text are retained in Cloud Storage;
+the browser preview is not the source of truth and is never used to replace a
+longer server-side extraction. Chat turns keep the document ID and retrieve
+relevant chunks again on every question, so the model does not depend on the
+previous prompt still containing the entire PDF. A finite model context cannot
+literally hold an unlimited document in every prompt; persistent storage plus
+retrieval is what preserves access without silently cutting the source.
+
+The default embedder is `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`,
+a multilingual model with Indonesian support and an approximately 0.22 GB model
+package. FastEmbed handles query and document encoding through
+its supported model interface. Override
+`EMBEDDING_MODEL_ID` only with a model that returns the configured
+`EMBEDDING_DIMENSION`.
+
+Create a Firestore vector index for the `embedding` field and the
+`user_id`/`file_id` filters used by the backend. Firestore will also return a
+CLI command for the required composite vector index when the first vector
+query is attempted. The backend falls back to the existing deterministic
+section-aware retrieval if the model or index is temporarily unavailable.
 
 Example request using the WandB (hosted) provider:
 

@@ -120,6 +120,11 @@ class LibraryItem(BaseModel):
     chat_id: str | None
     storage_path: str
     token_count: int
+    project_id: str | None = None
+    embedding_status: str = "pending"
+    embedding_model: str | None = None
+    embedding_dimensions: int | None = None
+    embedding_error: str | None = None
 
 class ProjectCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)

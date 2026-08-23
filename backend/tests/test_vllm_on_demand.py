@@ -20,6 +20,26 @@ class FakeProcess:
         return 0
 
 
+def test_default_metal_command_exposes_128k_with_single_sequence(monkeypatch, tmp_path) -> None:
+    for name in (
+        "VLLM_MAX_MODEL_LEN",
+        "VLLM_MAX_NUM_SEQS",
+        "VLLM_MAX_NUM_BATCHED_TOKENS",
+        "VLLM_GPU_MEMORY_UTILIZATION",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    config = VllmOnDemandConfig.from_env(
+        "http://127.0.0.1:8000", "Legal-verse/InaVerdict-gemma-v2"
+    )
+
+    assert "--max-model-len" in config.command
+    assert config.command[config.command.index("--max-model-len") + 1] == "128000"
+    assert config.command[config.command.index("--max-num-seqs") + 1] == "1"
+    assert config.command[config.command.index("--max-num-batched-tokens") + 1] == "512"
+    assert "--gpu-memory-utilization" not in config.command
+
+
 @pytest.mark.asyncio
 async def test_manager_starts_on_first_request_and_stops_when_idle(tmp_path) -> None:
     executable = tmp_path / "vllm"
@@ -56,6 +76,10 @@ async def test_manager_starts_on_first_request_and_stops_when_idle(tmp_path) -> 
             assert manager.status == "ready"
             assert manager.active_requests == 1
             spawn.assert_awaited_once()
+            child_env = spawn.await_args.kwargs["env"]
+            assert child_env["VLLM_METAL_USE_PAGED_ATTENTION"] == "1"
+            assert child_env["VLLM_METAL_MEMORY_FRACTION"] == "0.90"
+            assert child_env["VLLM_MLX_DEVICE"] == "gpu"
 
             await manager.release()
             await asyncio.sleep(0.03)

@@ -134,6 +134,24 @@ _POST_IDENTITY_LINE = re.compile(
     re.IGNORECASE,
 )
 
+_RECOVERY_CUES: dict[str, tuple[re.Pattern[str], ...]] = {
+    "penangkapan": (re.compile(r"\bpenangkapan\b|\bditangkap\b", re.I),),
+    "penahanan": (re.compile(r"\bpenahanan\b|\bditahan\b", re.I),),
+    "tuntutan": (re.compile(r"pembacaan\s+tuntutan|tuntutan\s+pidana", re.I),),
+    "dakwaan": (re.compile(r"surat\s+dakwaan|\bdidakwa\b", re.I),),
+    "saksi": (re.compile(r"mengajukan\s+saksi|saksi\s*-\s*saksi|keterangan\s+saksi", re.I),),
+    "ahli": (re.compile(r"saksi\s+ahli|keterangan\s+ahli|tenaga\s+ahli|ahli\s+kedokteran", re.I),),
+    "terdakwa": (re.compile(r"(?:memberikan\s+)?keterangan\s+(?:terdakwa|anak)|(?:anak|terdakwa).{0,120}(?:memberikan\s+keterangan|menerangkan)", re.I),),
+    "surat": (re.compile(r"bukti\s+surat|alat\s+bukti\s+surat|berkas\s+perkara\s+dan\s+surat|mengajukan\s+surat|dibacakan\s+visum", re.I),),
+    "petunjuk_barang_bukti": (re.compile(r"mengajukan\s+barang\s+bukti|barang\s+bukti\s+berupa|menetapkan\s+barang\s+bukti", re.I),),
+    "fakta_hukum": (re.compile(r"fakta\s*-\s*fakta\s+hukum|fakta\s+hukum", re.I),),
+    "pertimbangan_hukum": (re.compile(r"mempertimbangkan|selanjutnya.{0,100}(?:hakim|majelis)", re.I),),
+}
+_RECOVERY_BOUNDARY = re.compile(
+    r"^(?:menimbang|mengingat|mengadili|menetapkan|demikian(?:lah)?\b|panitera\b|ttd\.?$|setelah\s+membaca)\b",
+    re.I,
+)
+
 
 @dataclass
 class SectionSpan:
@@ -147,6 +165,13 @@ def _normalise(text: str) -> str:
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r" *\n *", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
+    lines = text.splitlines()
+    deduped: list[str] = []
+    for line in lines:
+        if deduped and line.strip() and line.strip() == deduped[-1].strip():
+            continue
+        deduped.append(line)
+    text = "\n".join(deduped)
     return text.strip()
 
 
@@ -158,6 +183,13 @@ def locate_first_anchor(text: str, key: str, search_from: int = 0) -> int | None
     would otherwise skip an earlier, more specific form such as
     "Pengadilan Anak pada Pengadilan Negeri X" and match a body mention instead.
     """
+    if key == "ahli":
+        for pat in get_anchor_patterns().get(key, []):
+            m = pat.search(text, search_from)
+            if m:
+                return m.start()
+        return None
+
     best: int | None = None
     for pat in get_anchor_patterns().get(key, []):
         m = pat.search(text, search_from)
@@ -419,6 +451,122 @@ def _find_tail(text: str, start: int, end: int) -> dict[str, int]:
     return found
 
 
+def _recover_body_span(text: str, key: str) -> str:
+    """Recover one cue-bearing paragraph when ordered anchors collapsed."""
+    cues = _RECOVERY_CUES.get(key, ())
+    if not cues:
+        return ""
+    lines = text.splitlines(keepends=True)
+    offset = 0
+    for index, raw_line in enumerate(lines):
+        line = raw_line.strip()
+        if not line or not any(cue.search(line) for cue in cues):
+            offset += len(raw_line)
+            continue
+        # Avoid treating a mention in the title/identity block as a body
+        # section; body evidence normally starts with a legal paragraph cue.
+        if index < 10 and not re.match(r"^(?:menimbang|setelah|membaca|[-•]|d\.)", line, re.I):
+            offset += len(raw_line)
+            continue
+        end = offset + len(raw_line)
+        for next_line in lines[index + 1 :]:
+            stripped = next_line.strip()
+            if stripped and _RECOVERY_BOUNDARY.match(stripped):
+                break
+            if not stripped:
+                break
+            end += len(next_line)
+        return text[offset:end].strip()
+    return ""
+
+
+def _recover_signature_span(text: str, key: str) -> str:
+    """Recover tail metadata when the amar boundary is absent in OCR text."""
+    lines = text.splitlines(keepends=True)
+    if key == "panitera_pengganti":
+        pattern = re.compile(r"panitera\s+pengganti", re.I)
+    else:
+        pattern = re.compile(r"^(?:ttd\.?|hakim\s+anggota|panitera\s+pengganti)", re.I)
+    offsets: list[int] = []
+    offset = 0
+    for line in lines:
+        if pattern.search(line.strip()):
+            offsets.append(offset)
+        offset += len(line)
+    if not offsets:
+        return ""
+    start = offsets[-1]
+    index = 0
+    running = 0
+    for i, line in enumerate(lines):
+        if running == start:
+            index = i
+            break
+        running += len(line)
+    if key == "panitera_pengganti":
+        # Prefer the adjacent name line over a procedural sentence containing
+        # the words "panitera pengganti".
+        for direction in (1, -1):
+            candidate = index + direction
+            steps = 0
+            while 0 <= candidate < len(lines) and steps < 5:
+                value = lines[candidate].strip()
+                if value and not re.match(r"^(?:panitera|hakim|ttd\.?|t\s*t\s*d)\b", value, re.I) and len(value) < 100:
+                    return value
+                candidate += direction
+                steps += 1
+    return "".join(lines[index : min(index + 5, len(lines))]).strip()
+
+
+def _refine_defendant_boundary(text: str, boundaries: dict[str, int]) -> None:
+    """Prefer defendant testimony inside the evidence interval."""
+    lower = boundaries.get("dakwaan", 0)
+    upper_candidates = [boundaries[k] for k in ("surat", "petunjuk_barang_bukti", "fakta_hukum", "pertimbangan_hukum", "amar_putusan") if k in boundaries and boundaries[k] > lower]
+    upper = min(upper_candidates, default=len(text))
+    patterns = get_anchor_patterns().get("terdakwa", [])[:3]
+    candidates: list[int] = []
+    for pattern in patterns:
+        for match in pattern.finditer(text, lower):
+            if match.start() < upper:
+                candidates.append(match.start())
+    if candidates:
+        boundaries["terdakwa"] = max(candidates)
+
+
+def _refine_body_boundaries(text: str, boundaries: dict[str, int]) -> None:
+    """Use canonical neighboring sections to constrain specific body cues."""
+    keys = ["saksi", "ahli", "terdakwa", "surat", "petunjuk_barang_bukti", "fakta_hukum", "pertimbangan_hukum"]
+    for index, key in enumerate(keys):
+        lower = boundaries.get(keys[index - 1], boundaries.get("dakwaan", 0)) if index else boundaries.get("dakwaan", 0)
+        upper_values = [boundaries[k] for k in keys[index + 1 :] if k in boundaries and boundaries[k] > lower]
+        upper = min(upper_values, default=boundaries.get("amar_putusan", len(text)))
+        patterns = get_anchor_patterns().get(key, [])
+        # The last pattern(s) are generic fallbacks; only use them if no
+        # feature-specific cue exists in the constrained interval.
+        candidates: list[int] = []
+        for pattern in patterns:
+            matches = [m.start() for m in pattern.finditer(text, lower) if m.start() < upper]
+            if matches:
+                candidates = matches
+                break
+        if candidates:
+            boundaries[key] = min(candidates)
+
+
+def _refine_pretrial_boundaries(text: str, boundaries: dict[str, int]) -> None:
+    keys = ["penangkapan", "penahanan", "tuntutan", "dakwaan"]
+    lower = boundaries.get("pekerjaan", 0)
+    for index, key in enumerate(keys):
+        upper_values = [boundaries[k] for k in keys[index + 1 :] if k in boundaries and boundaries[k] > lower]
+        upper = min(upper_values, default=boundaries.get("saksi", len(text)))
+        for pattern in get_anchor_patterns().get(key, []):
+            matches = [m.start() for m in pattern.finditer(text, lower) if m.start() < upper]
+            if matches:
+                boundaries[key] = min(matches)
+                lower = boundaries[key]
+                break
+
+
 def sectionize(text: str) -> dict[str, str]:
     """Extract all 31 sections from ``text``. Returns {key: span_text}."""
     text = _normalise(text)
@@ -432,6 +580,10 @@ def sectionize(text: str) -> dict[str, str]:
         if start is not None:
             boundaries[key] = start
             scan_from = start
+
+    _refine_pretrial_boundaries(text, boundaries)
+    _refine_body_boundaries(text, boundaries)
+    _refine_defendant_boundary(text, boundaries)
 
     # ---- Phase 2: derive spans ----------------------------------------
 
@@ -459,7 +611,7 @@ def sectionize(text: str) -> dict[str, str]:
 
     # Tail short fields and the court name are single standalone lines; their
     # span must not bleed into the following paragraph.
-    _SHORT_LINE_KEYS = {"hari", "tanggal", "tahun", "nama_pengadilan_negeri"}
+    _SHORT_LINE_KEYS = {"hari", "tanggal", "tahun", "nama_pengadilan_negeri", *IDENTITY_KEYS}
 
     def _span_end(start: int) -> int:
         nl = text.find("\n", start)
@@ -516,6 +668,27 @@ def sectionize(text: str) -> dict[str, str]:
             for k, pos in tail.items():
                 boundaries[k] = pos
             _derive_spans()
+
+    # 3c. OCR/plain-text recovery: when the ordered scan assigned a generic
+    # paragraph to a body key (or found no span), use a bounded paragraph that
+    # actually contains that feature's cue.
+    for key, cues in _RECOVERY_CUES.items():
+        current = spans.get(key)
+        if current is not None and current.text.strip() and any(cue.search(current.text) for cue in cues):
+            continue
+        recovered = _recover_body_span(text, key)
+        if recovered:
+            spans[key] = SectionSpan(key=key, start=-1, end=-1, text=recovered)
+
+    for key in ("panitera_pengganti", "tanda_tangan_majelis"):
+        current = spans.get(key)
+        recovered = _recover_signature_span(text, key)
+        if key == "panitera_pengganti":
+            current_bad = True
+        else:
+            current_bad = current is None or not current.text.strip()
+        if recovered and current_bad:
+            spans[key] = SectionSpan(key=key, start=-1, end=-1, text=recovered)
 
     return {k: v.text for k, v in spans.items()}
 

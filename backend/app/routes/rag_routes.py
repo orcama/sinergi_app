@@ -1,5 +1,6 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 
+from app.core.auth import get_optional_user
 from app.controllers.rag_controller import pdf_extract, rag_ingest, rag_query
 from app.schemas import RagIngestRequest, RagQueryRequest, RagIngestResponse, RagQueryResponse, PdfExtractResponse
 
@@ -17,5 +18,5 @@ async def rag_ingest_route(body: RagIngestRequest, request: Request):
 
 
 @router.post("/api/rag/query", response_model=RagQueryResponse)
-async def rag_query_route(body: RagQueryRequest, request: Request):
-    return rag_query(body, request)
+async def rag_query_route(body: RagQueryRequest, request: Request, user: dict | None = Depends(get_optional_user)):
+    return rag_query(body, request, user)
