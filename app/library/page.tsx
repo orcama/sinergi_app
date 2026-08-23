@@ -62,7 +62,17 @@ function formatDate(isoString: string): string {
 /* Sub-components                                                      */
 /* ------------------------------------------------------------------ */
 
-function Sidebar({ isCollapsed, onToggleCollapse }: { isCollapsed: boolean; onToggleCollapse: () => void }) {
+function Sidebar({
+  isCollapsed,
+  onToggleCollapse,
+  mobileOpen,
+  onMobileClose,
+}: {
+  isCollapsed: boolean;
+  onToggleCollapse: () => void;
+  mobileOpen: boolean;
+  onMobileClose: () => void;
+}) {
   const router = useRouter();
   const { user, logout, loading } = useAuth();
   const handleLogout = async () => {
@@ -72,11 +82,24 @@ function Sidebar({ isCollapsed, onToggleCollapse }: { isCollapsed: boolean; onTo
   const displayName = user?.displayName ?? user?.email ?? "User";
   const initials = (displayName.charAt(0) ?? "U").toUpperCase();
   return (
-    <aside
-      className={`flex h-full shrink-0 flex-col bg-[#1A1625] text-white transition-[width] duration-300 ${
-        isCollapsed ? "w-[72px]" : "w-[280px]"
-      }`}
-    >
+    <>
+      {mobileOpen && (
+        <button
+          type="button"
+          aria-label="Tutup sidebar"
+          onClick={onMobileClose}
+          className="fixed inset-0 z-30 bg-black/40 lg:hidden"
+        />
+      )}
+      <aside
+        className={`fixed inset-y-0 left-0 z-40 flex shrink-0 flex-col bg-[#1A1625] text-white transition-transform duration-300 lg:static lg:z-auto lg:transition-[width] ${
+          isCollapsed ? "lg:w-[72px]" : "lg:w-[280px]"
+        } ${
+          mobileOpen
+            ? "translate-x-0"
+            : "-translate-x-full lg:translate-x-0"
+        }`}
+      >
       <div className="flex items-center justify-between px-4 pt-5 pb-4">
         {!isCollapsed && (
           <Image
@@ -163,7 +186,8 @@ function Sidebar({ isCollapsed, onToggleCollapse }: { isCollapsed: boolean; onTo
           </div>
         )}
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }
 
@@ -340,6 +364,7 @@ function LibraryTable({
 
 function LibraryPage() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [activeFilter, setActiveFilter] = useState<"all" | "images" | "documents">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -443,9 +468,19 @@ function LibraryPage() {
       <Sidebar
         isCollapsed={isSidebarCollapsed}
         onToggleCollapse={() => setIsSidebarCollapsed((v) => !v)}
+        mobileOpen={isMobileSidebarOpen}
+        onMobileClose={() => setIsMobileSidebarOpen(false)}
       />
 
-      <main className="flex min-w-0 flex-1 flex-col overflow-y-auto">
+      <main className="relative flex min-w-0 flex-1 flex-col overflow-y-auto">
+        <button
+          type="button"
+          onClick={() => setIsMobileSidebarOpen(true)}
+          className="fixed left-3 top-3 z-20 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-zinc-600 shadow ring-1 ring-zinc-200 transition-colors hover:bg-zinc-100 lg:hidden"
+          aria-label="Buka menu"
+        >
+          <PanelLeftOpen className="h-5 w-5" />
+        </button>
         <div className="mx-auto w-full max-w-4xl px-4 py-8 sm:px-8">
           <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
             <h1 className="text-3xl font-bold text-zinc-900">Library</h1>

@@ -490,6 +490,8 @@ function Sidebar({
   onViewFiles,
   openMenuId,
   setOpenMenuId,
+  mobileOpen,
+  onMobileClose,
 }: {
   sessions: ChatSession[];
   activeSessionId: string | null;
@@ -502,6 +504,8 @@ function Sidebar({
   onViewFiles: (id: string) => void;
   openMenuId: string | null;
   setOpenMenuId: (id: string | null) => void;
+  mobileOpen: boolean;
+  onMobileClose: () => void;
 }) {
   const router = useRouter();
   const { user, logout, loading } = useAuth();
@@ -512,11 +516,24 @@ function Sidebar({
   const displayName = user?.displayName ?? user?.email ?? "User";
   const initials = (displayName.charAt(0) ?? "U").toUpperCase();
   return (
-    <aside
-      className={`flex h-full shrink-0 flex-col bg-[#1A1625] text-white transition-[width] duration-300 ${
-        isCollapsed ? "w-[72px]" : "w-[280px]"
-      }`}
-    >
+    <>
+      {mobileOpen && (
+        <button
+          type="button"
+          aria-label="Tutup sidebar"
+          onClick={onMobileClose}
+          className="fixed inset-0 z-30 bg-black/40 lg:hidden"
+        />
+      )}
+      <aside
+        className={`fixed inset-y-0 left-0 z-40 flex shrink-0 flex-col bg-[#1A1625] text-white transition-transform duration-300 lg:static lg:z-auto lg:transition-[width] ${
+          isCollapsed ? "lg:w-[72px]" : "lg:w-[280px]"
+        } ${
+          mobileOpen
+            ? "translate-x-0"
+            : "-translate-x-full lg:translate-x-0"
+        }`}
+      >
       <div className="flex items-center justify-between px-4 pt-5 pb-4">
         {!isCollapsed && (
           <Image
@@ -647,7 +664,8 @@ function Sidebar({
           </div>
         )}
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }
 
@@ -1368,7 +1386,7 @@ function SourcesSidebar({
     return (
       <button
         onClick={onToggle}
-        className="flex h-full w-8 shrink-0 items-center justify-center bg-[#1A1625] text-white/70 transition-colors hover:bg-[#241d33] hover:text-white"
+        className="fixed bottom-6 right-0 z-20 flex h-12 w-8 shrink-0 items-center justify-center rounded-l-xl bg-[#1A1625] text-white/70 shadow-lg transition-colors hover:bg-[#241d33] hover:text-white lg:static lg:h-full lg:w-8 lg:rounded-none lg:shadow-none"
         aria-label="Open sources sidebar"
       >
         <ChevronLeft className="h-5 w-5" />
@@ -1377,7 +1395,7 @@ function SourcesSidebar({
   }
 
   return (
-    <div className="relative h-full w-[350px] shrink-0 bg-[#F5F5F7]">
+    <div className="fixed inset-y-0 right-0 z-40 w-[85vw] max-w-[350px] shrink-0 bg-[#F5F5F7] shadow-xl lg:static lg:z-auto lg:w-[350px] lg:shadow-none">
       <aside className="flex h-full flex-col border-l border-zinc-200 bg-white transition-transform duration-300">
         <div className="flex items-center justify-between px-5 py-4">
           <h3 className="text-sm font-bold text-zinc-900">Sumber Jawaban</h3>
@@ -1413,6 +1431,7 @@ export default function ChatPage() {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [toast, setToast] = useState<string | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [filesModalSession, setFilesModalSession] = useState<ChatSession | null>(null);
   const [previewAttachment, setPreviewAttachment] = useState<Attachment | null>(null);
@@ -1802,12 +1821,22 @@ if (pending.length === 0) return;
         onViewFiles={handleViewFiles}
         openMenuId={openMenuId}
         setOpenMenuId={setOpenMenuId}
+        mobileOpen={isMobileSidebarOpen}
+        onMobileClose={() => setIsMobileSidebarOpen(false)}
       />
 
       {/* Center chat area */}
-      <main className="flex min-w-0 flex-1 flex-col">
+      <main className="relative flex min-w-0 flex-1 flex-col">
+        <button
+          type="button"
+          onClick={() => setIsMobileSidebarOpen(true)}
+          className="absolute left-3 top-2.5 z-20 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-zinc-600 shadow ring-1 ring-zinc-200 transition-colors hover:bg-zinc-100 lg:hidden"
+          aria-label="Buka menu"
+        >
+          <PanelLeftOpen className="h-5 w-5" />
+        </button>
         {activeSession && (
-          <div className="flex items-center justify-between border-b border-zinc-200 bg-white/60 px-4 py-2.5 sm:px-8">
+          <div className="flex items-center justify-between border-b border-zinc-200 bg-white/60 px-4 py-2.5 pl-11 sm:px-8 lg:pl-8">
             <span className="truncate text-sm font-semibold text-zinc-800">
               {activeSession.title}
             </span>
