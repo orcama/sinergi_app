@@ -359,6 +359,12 @@ def test_current_public_url_returns_latest_tunnel_url(tmp_path) -> None:
     )
 
 
+def test_current_public_url_prefers_configured_public_url(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("PUBLIC_URL", "https://api.legal-verse.id/")
+
+    assert current_public_url() == "https://api.legal-verse.id"
+
+
 @pytest.mark.asyncio
 async def test_wandb_provider_extracts_pdf_content() -> None:
     pdf = make_test_pdf("Kronologi kasus perdagangan orang")

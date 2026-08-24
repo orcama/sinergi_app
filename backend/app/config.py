@@ -36,6 +36,11 @@ def env_list(name: str, default: str) -> list[str]:
 
 
 def current_public_url(log_path: Path | None = None) -> str:
+    if log_path is None:
+        configured_url = os.getenv("PUBLIC_URL", "").strip().rstrip("/")
+        if configured_url:
+            return configured_url
+
     configured_path = os.getenv("PUBLIC_TUNNEL_LOG", "").strip()
     path = log_path or (Path(os.path.expanduser(configured_path)) if configured_path else None)
     path = path or Path(__file__).resolve().parent.parent / "logs" / "tunnel-error.log"
