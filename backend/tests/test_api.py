@@ -12,6 +12,7 @@ from unittest import mock
 from app.main import (
     DEFAULT_MODEL,
     DEFAULT_SYSTEM_PROMPT,
+    INDONESIAN_REASONING_INSTRUCTION,
     MODEL_ID,
     WANDB_MODEL_ID,
     current_public_url,
@@ -20,6 +21,7 @@ from app.main import (
     load_providers,
     PROVIDER_BY_ID,
     app,
+    build_system_prompt,
 )
 
 VLLM_MODEL = PROVIDER_BY_ID["vllm"].model if "vllm" in PROVIDER_BY_ID else MODEL_ID
@@ -68,6 +70,19 @@ def make_test_pdf(text: str) -> str:
 
 def teardown_provider_env() -> None:
     os.environ.pop("MODEL_PROVIDERS", None)
+
+
+def test_default_prompt_requires_indonesian_reasoning() -> None:
+    assert INDONESIAN_REASONING_INSTRUCTION in DEFAULT_SYSTEM_PROMPT
+    assert "bahasa Indonesia" in DEFAULT_SYSTEM_PROMPT
+    assert "reasoning_content" in DEFAULT_SYSTEM_PROMPT
+
+
+def test_custom_prompt_keeps_indonesian_reasoning_instruction() -> None:
+    prompt = build_system_prompt("Jawab singkat dan gunakan struktur poin.")
+
+    assert prompt.startswith("Jawab singkat dan gunakan struktur poin.")
+    assert prompt.endswith(INDONESIAN_REASONING_INSTRUCTION)
 
 
 @pytest.mark.asyncio

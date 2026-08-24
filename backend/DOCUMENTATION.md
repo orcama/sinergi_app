@@ -109,6 +109,8 @@ MODEL_ID=Legal-verse/InaVerdict-gemma-v2
 VLLM_BASE_URL=http://127.0.0.1:8000
 CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
 REQUEST_TIMEOUT_SECONDS=300
+# The model is instructed to perform its reasoning in Bahasa Indonesia.
+# CHAT_SYSTEM_PROMPT=Optional custom prompt; the Indonesian reasoning instruction remains appended.
 
 WANDB_BASE_URL=https://api.inference.wandb.ai
 WANDB_MODEL_ID=MiniMaxAI/MiniMax-M3
