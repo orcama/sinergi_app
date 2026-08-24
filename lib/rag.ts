@@ -1,7 +1,7 @@
-const RAG_API_URL =
-  process.env.NEXT_PUBLIC_CHAT_API_URL ?? "http://127.0.0.1:8001";
-
+import { BACKEND_URL } from "@/lib/backend-url";
 import { auth } from "@/lib/firebase";
+
+const RAG_API_URL = BACKEND_URL;
 
 export interface RagSection {
   key: string;

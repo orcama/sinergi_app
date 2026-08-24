@@ -1,11 +1,9 @@
 import axios, { type AxiosInstance, type InternalAxiosRequestConfig } from "axios";
 import { useAuth } from "@/lib/auth-context";
 import { auth } from "@/lib/firebase";
+import { BACKEND_URL } from "@/lib/backend-url";
 
-export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL ??
-  process.env.NEXT_PUBLIC_API_BASE_URL ??
-  "http://localhost:8000";
+export const API_BASE_URL = BACKEND_URL;
 
 function api(): AxiosInstance {
   const instance = axios.create({ baseURL: API_BASE_URL });

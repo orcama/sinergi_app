@@ -46,6 +46,7 @@ import {
   saveToLibrary,
   type RagHit,
 } from "@/lib/rag";
+import { BACKEND_URL } from "@/lib/backend-url";
 import { AuthGuard } from "@/lib/components/auth/AuthGuard";
 import { useAuth } from "@/lib/auth-context";
 
@@ -116,8 +117,7 @@ function trimConversationToLimit(
   return messages.slice(start);
 }
 
-const CHAT_API_URL =
-  process.env.NEXT_PUBLIC_CHAT_API_URL ?? "http://127.0.0.1:8001";
+const CHAT_API_URL = BACKEND_URL;
 
 function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
