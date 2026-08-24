@@ -759,22 +759,7 @@ function ThinkingAnswer({
   thinkingSeconds?: number;
 }) {
   const hasThinking = !!thinking?.trim();
-  const [expanded, setExpanded] = useState(true);
-  const [wasStreaming, setWasStreaming] = useState(false);
-
-  // Saat streaming mulai memproduksi teks berpikir, pastikan section tampil.
-  // (Adjusting state during render — pola React untuk sinkronisasi tanpa effect.)
-  if (isStreaming && hasThinking && !expanded) {
-    setExpanded(true);
-  }
-  // Begitu streaming selesai, otomatis collapse untuk menghemat ruang.
-  if (!isStreaming && wasStreaming) {
-    setWasStreaming(false);
-    setExpanded(false);
-  }
-  if (isStreaming && !wasStreaming) {
-    setWasStreaming(true);
-  }
+  const [expanded, setExpanded] = useState(false);
 
   if (!hasThinking) return null;
 
@@ -815,6 +800,7 @@ function ThinkingAnswer({
         className={`grid transition-[grid-template-rows] duration-300 ease-out ${
           expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
         }`}
+        aria-hidden={!expanded}
       >
         <div className="overflow-hidden">
           <div className="border-t border-purple-200/60 px-4 py-3">
