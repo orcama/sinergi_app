@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import base64
 import io
+import logging
 import re
+import shutil
+import subprocess
 import unicodedata
 from collections import Counter
 
 from pypdf import PdfReader
 
 from app.schemas import ContentPart, ImageUrlPart, PdfPart, TextPart
+
+logger = logging.getLogger(__name__)
 
 
 def clean_pdf_text(text: str) -> str:
@@ -37,14 +42,50 @@ def clean_pdf_text(text: str) -> str:
     return "\n".join(cleaned).strip()
 
 
+def _extract_with_pdftotext(raw: bytes) -> str:
+    executable = shutil.which("pdftotext")
+    if not executable:
+        return ""
+    try:
+        result = subprocess.run(
+            [executable, "-layout", "-", "-"],
+            input=raw,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=45,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.warning("pdftotext fallback failed: %s", exc)
+        return ""
+    if result.returncode != 0:
+        logger.warning(
+            "pdftotext fallback returned %s: %s",
+            result.returncode,
+            result.stderr.decode("utf-8", errors="replace")[:500],
+        )
+        return ""
+    return result.stdout.decode("utf-8", errors="replace")
+
+
 def extract_pdf_text(data: str, max_chars: int | None = 32_000, collapse: bool = True) -> str:
     if data.startswith("data:") and "," in data:
         data = data.split(",", 1)[1]
     try:
         raw = base64.b64decode(data)
-        text = "\n\f\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(raw)).pages)
-    except Exception:
+    except Exception as exc:
+        logger.warning("PDF base64 decoding failed: %s", exc)
         return ""
+    try:
+        reader = PdfReader(io.BytesIO(raw), strict=False)
+        if reader.is_encrypted:
+            reader.decrypt("")
+        text = "\n\f\n".join(page.extract_text() or "" for page in reader.pages)
+    except Exception as exc:
+        logger.warning("pypdf extraction failed; trying pdftotext: %s", exc)
+        text = ""
+    if not text.strip():
+        text = _extract_with_pdftotext(raw)
     cleaned = clean_pdf_text(text)
     result = " ".join(cleaned.split()) if collapse else cleaned
     return result if max_chars is None else result[:max_chars]

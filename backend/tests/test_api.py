@@ -23,6 +23,8 @@ from app.main import (
     app,
     build_system_prompt,
 )
+from app.schemas import MAX_DATA_URL_LENGTH, RagIngestRequest
+from app.services import content_service
 
 VLLM_MODEL = PROVIDER_BY_ID["vllm"].model if "vllm" in PROVIDER_BY_ID else MODEL_ID
 
@@ -358,6 +360,30 @@ def test_extract_pdf_text_from_data_url() -> None:
 def test_extract_pdf_text_handles_garbage() -> None:
     assert extract_pdf_text("not-a-real-pdf") == ""
     assert extract_pdf_text("data:application/pdf;base64,!!invalid!!") == ""
+
+
+def test_pdf_payload_limit_covers_a_ten_megabyte_file() -> None:
+    encoded_size = ((10 * 1024 * 1024 + 2) // 3) * 4 + len(
+        "data:application/pdf;base64,"
+    )
+
+    assert encoded_size < MAX_DATA_URL_LENGTH
+    assert RagIngestRequest(data="x" * MAX_DATA_URL_LENGTH).data
+
+
+def test_extract_pdf_text_uses_pdftotext_fallback(monkeypatch) -> None:
+    monkeypatch.setattr(
+        content_service,
+        "PdfReader",
+        mock.Mock(side_effect=ValueError("malformed PDF")),
+    )
+    monkeypatch.setattr(
+        content_service,
+        "_extract_with_pdftotext",
+        lambda raw: "Teks fallback dari pdftotext",
+    )
+
+    assert extract_pdf_text(make_test_pdf("ignored")) == "Teks fallback dari pdftotext"
 
 
 def test_current_public_url_returns_latest_tunnel_url(tmp_path) -> None:

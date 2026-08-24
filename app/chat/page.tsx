@@ -965,7 +965,7 @@ function AttachmentChip({
         canPreview
           ? "Klik untuk lihat teks hasil ekstraksi"
           : attachment.status === "error"
-            ? "Gagal mengekstrak teks"
+            ? attachment.error ?? "Gagal mengekstrak teks"
             : undefined
       }
       className={`flex items-center gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-2 transition-colors ${
@@ -990,8 +990,8 @@ function AttachmentChip({
           </div>
         )}
         {attachment.status === "error" && (
-          <div className="text-xs font-medium text-red-500">
-            Gagal ekstrak teks
+          <div className="text-xs font-medium text-red-500" title={attachment.error}>
+            {attachment.error ?? "Gagal ekstrak teks"}
           </div>
         )}
         {canPreview && (
@@ -1671,6 +1671,13 @@ const incoming = Array.from(fileList);
     const pending: Attachment[] = [];
 
     for (const file of incoming) {
+      if (
+        file.type !== "application/pdf" &&
+        !file.name.toLowerCase().endsWith(".pdf")
+      ) {
+        showToast(`"${file.name}" bukan file PDF.`);
+        continue;
+      }
       if (attachments.length + pending.length >= MAX_ATTACHMENTS) {
         showToast(`Maksimal ${MAX_ATTACHMENTS} file per pesan.`);
         break;
@@ -1691,7 +1698,7 @@ const incoming = Array.from(fileList);
 if (pending.length === 0) return;
     setAttachments((prev) => [...prev, ...pending]);
 
-    // Ekstraksi teks asli lewat backend Python (PyMuPDF), bukan simulasi.
+    // Ekstraksi teks asli lewat backend Python, bukan simulasi.
     for (const attachment of pending) {
       extractPdfText(attachment.file!)
         .then(({ text, token_count }) => {
@@ -1729,11 +1736,15 @@ if (pending.length === 0) return;
             }
           );
         })
-        .catch(() => {
+        .catch((error: unknown) => {
+          const message =
+            error instanceof Error && error.message
+              ? error.message
+              : "Gagal mengekstrak teks dari PDF.";
           setAttachments((prev) =>
             prev.map((att) =>
               att.id === attachment.id
-                ? { ...att, status: "error" as const }
+                ? { ...att, status: "error" as const, error: message }
                 : att
             )
           );
