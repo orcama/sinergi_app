@@ -266,18 +266,23 @@ runtime copy outside `Documents` because macOS privacy controls restrict
 background services there. Install it for the current Mac user:
 
 ```bash
-cd /Users/galihmac/Documents/sinergi_app
-zsh backend/launchd/deploy.sh
+cd /Users/galihmac/Documents/sinergi_app_deploy
+zsh backend/launchd/deploy.sh --managed
 ```
 
-The default deployment is an interactive development launcher: it keeps the
-Cloudflare tunnel under `launchd`, then opens separate Terminal windows for
-the frontend, FastAPI dev server, and vLLM so each process can be traced live.
-It stops the managed gateway first to avoid a second process binding port
-8001. For the original background-only launchd behavior, use:
+`--managed` is the recommended on-demand setup: it keeps only the FastAPI
+gateway and Cloudflare tunnel under LaunchAgent, while vLLM starts on the first
+model request and is stopped after the idle timeout. The source `backend/.env`
+is copied into the runtime directory during deployment.
+
+For interactive troubleshooting only, use the default deployment mode. It
+keeps the Cloudflare tunnel under `launchd`, then opens separate Terminal
+windows for the frontend, FastAPI dev server, and vLLM so each process can be
+traced live. It stops the managed gateway first to avoid a second process
+binding port 8001:
 
 ```bash
-zsh backend/launchd/deploy.sh --managed
+zsh backend/launchd/deploy.sh
 ```
 
 Check the gateway and vLLM state:

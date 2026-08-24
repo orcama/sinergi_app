@@ -14,25 +14,28 @@ zsh backend/launchd/show-access.sh
 Install or refresh it for the current macOS user:
 
 ```bash
-zsh backend/launchd/deploy.sh
-```
-
-By default, the command runs in interactive development mode. It keeps the
-Cloudflare tunnel managed by `launchd`, stops the managed FastAPI gateway to
-avoid a port conflict, and opens three separate Terminal windows for the
-frontend (`npm run dev`), FastAPI (`uv run --env-file .env fastapi dev ...`),
-and the documented Metal vLLM command. Use `Ctrl-C` in a window to stop that
-process.
-
-To use the original background-only deployment instead, run:
-
-```bash
 zsh backend/launchd/deploy.sh --managed
 ```
 
-The deployment waits for Cloudflare to allocate the new random URL and prints
-`Public API URL: https://...trycloudflare.com` before it exits. FastAPI also
-writes the current URL to `gateway.log` during application startup.
+`--managed` is the recommended on-demand deployment. It keeps the lightweight
+FastAPI gateway and Cloudflare tunnel under `launchd`; vLLM is started by the
+gateway only when a model request arrives and is stopped after the idle
+timeout. When the tunnel is already healthy, a managed redeploy keeps its
+current Quick Tunnel URL instead of allocating a new one.
+
+For interactive troubleshooting, omit `--managed`. This stops the managed
+FastAPI gateway and opens three separate Terminal windows for the frontend
+(`npm run dev`), FastAPI (`uv run --env-file .env fastapi dev ...`), and the
+documented Metal vLLM command. Use `Ctrl-C` in a window to stop that process.
+
+```bash
+zsh backend/launchd/deploy.sh
+```
+
+The deployment prints `Public API URL: https://...trycloudflare.com` before it
+exits. FastAPI also writes the current URL to `gateway.log` during application
+startup. To intentionally allocate a new Quick Tunnel URL, stop the tunnel
+LaunchAgent first and run the managed deployment again.
 
 The script copies only the backend runtime files (including the local `.env`
 and Firebase credential) into
