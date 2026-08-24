@@ -142,9 +142,11 @@ for example `sinergi-app-89eed.firebasestorage.app`. `FIRESTORE_DATABASE_ID`
 defaults to `(default)`.
 
 Firebase App Hosting deploys this repository's Next.js app. The Python gateway
-under `backend/` is a separate service; its public URL must be supplied to the
-frontend through `NEXT_PUBLIC_BACKEND_URL`. A Cloudflare Quick Tunnel URL is
-temporary and changes after restarts, so it is suitable for testing only.
+under `backend/` is a separate service. Its stable public URL is
+`https://api.legal-verse.id`, supplied to the frontend through
+`NEXT_PUBLIC_API_BASE_URL` and `NEXT_PUBLIC_BACKEND_URL`. The URL remains the
+same after backend or tunnel restarts; availability still depends on the Mac
+and its Cloudflare Tunnel being online.
 
 ## Running locally in two terminals
 
@@ -223,7 +225,6 @@ at launch.
 ### Terminal 2: start FastAPI manually
 
 From the repository root:
-a
 
 ```bash
 cd backend
@@ -289,17 +290,44 @@ binding port 8001:
 zsh backend/launchd/deploy.sh
 ```
 
-Check the gateway and vLLM state:
-
-tail -f ~/Library/Application\ Support/SinergiServer/logs/gateway-error.log \
-  ~/Library/Application\ Support/SinergiServer/logs/gateway.log \
-
 ```bash
 curl http://127.0.0.1:8001/health
 launchctl print gui/$(id -u)/com.sinergi.gateway
 tail -f ~/Library/Application\ Support/SinergiServer/logs/gateway-error.log \
   ~/Library/Application\ Support/SinergiServer/logs/gateway.log \
   ~/Library/Application\ Support/SinergiServer/logs/vllm.log
+```
+
+Restart the gateway without changing the public URL:
+
+```bash
+launchctl kickstart -k "gui/$(id -u)/com.sinergi.gateway"
+```
+
+Restart both the gateway and the stable Cloudflare Tunnel:
+
+```bash
+launchctl kickstart -k "gui/$(id -u)/com.sinergi.gateway"
+launchctl kickstart -k "gui/$(id -u)/com.sinergi.tunnel"
+```
+
+Terminate the gateway and unload it so `KeepAlive` does not start it again:
+
+```bash
+launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.sinergi.gateway.plist"
+```
+
+Terminate the public tunnel as well:
+
+```bash
+launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.sinergi.tunnel.plist"
+```
+
+Load a terminated service again:
+
+```bash
+launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.sinergi.gateway.plist"
+launchctl kickstart -k "gui/$(id -u)/com.sinergi.gateway"
 ```
 
 When vLLM is asleep, `/health` still returns HTTP 200 because the gateway can
@@ -332,12 +360,11 @@ configured not to sleep while connected to AC power. If the macOS firewall
 asks whether Python/FastAPI may accept incoming connections, allow it for the
 trusted local network.
 
-### Access from any network (public HTTPS test URL)
+### Access from any network (public HTTPS URL)
 
-The deployment also runs a domainless Cloudflare Quick Tunnel. It exposes the
-
-gateway through a public HTTPS URL with no authentication. It is intended only
-for testing.
+The deployment runs a named Cloudflare Tunnel at `https://api.legal-verse.id`.
+It exposes the gateway through a public HTTPS URL with no authentication, so
+protect production endpoints appropriately.
 
 Show the current URL on the Mac:
 
@@ -345,13 +372,13 @@ Show the current URL on the Mac:
 zsh backend/launchd/show-access.sh
 ```
 
-`zsh backend/launchd/deploy.sh` also prints the newly allocated URL every time
-it starts/restarts the public tunnel. The FastAPI startup log repeats the URL.
+`zsh backend/launchd/deploy.sh` prints the stable API URL. The FastAPI startup
+log repeats it.
 
 Use it from a phone or any other network:
 
 ```bash
-PUBLIC_URL=https://<current-url>.trycloudflare.com
+PUBLIC_URL=https://api.legal-verse.id
 
 # Cold-start vLLM without holding a public request open.
 curl -X POST "$PUBLIC_URL/api/vllm/wake"
@@ -368,13 +395,10 @@ curl "$PUBLIC_URL/api/chat" \
   }'
 ```
 
-Because no domain is configured, this uses Cloudflare's development Quick
-Tunnel service. The random URL can change after the tunnel or Mac restarts, has
-no uptime guarantee, and does not support SSE. Use the non-streaming
-`POST /api/chat` endpoint remotely. Its proxy timeout can also be shorter than
-the model cold start, which is why remote clients should call
-`POST /api/vllm/wake`, poll `/health`, and then call `/api/chat`. Run
-`show-access.sh` again to retrieve the new URL after a restart.
+The named tunnel keeps this hostname after tunnel or Mac restarts. The Mac must
+remain online, and the proxy timeout can be shorter than the model cold start,
+so remote clients should call `POST /api/vllm/wake`, poll `/health`, and then
+call `/api/chat`.
 
 ## Backend endpoints
 
