@@ -160,7 +160,7 @@ vllm serve Legal-verse/InaVerdict-gemma-v2 \
   --served-model-name Legal-verse/InaVerdict-gemma-v2 \
   --host 127.0.0.1 \
   --port 8000 \
-  --max-model-len 128000 \
+  --max-model-len 65536 \
   --max-num-seqs 1 \
   --max-num-batched-tokens 512 \
   --default-chat-template-kwargs '{"enable_thinking": true}' \
@@ -172,20 +172,20 @@ the Gemma 4 E2B architecture reported by the checkpoint configuration; it is
 not a DeepSeek or Gemma 3 deployment. Its config reports
 `max_position_embeddings: 131072`, so 128,000 is within the model-native limit.
 
-For a 16 GB M4, the serving profile deliberately uses one sequence and a
-512-token scheduler batch. This trades prefill throughput for the requested
-long context and lower activation pressure. Set
+For a 16 GB M4, the serving profile deliberately uses one sequence, a 512-token
+scheduler batch, and a 65,536-token context. This trades prefill throughput and
+maximum context for a KV-cache budget that fits alongside the model in unified
+memory. Set
 `VLLM_METAL_USE_PAGED_ATTENTION=1` and
 `VLLM_METAL_MEMORY_FRACTION=0.90` in the vLLM shell. On current Metal paged
 attention, the generic `--gpu-memory-utilization` flag is not the controlling
 KV-cache setting; the Metal-specific environment variable is.
 
-The checkpoint is an approximately 10.25 GB FP16 file, so 128K is a serving
-target, not a promise that every macOS process state will have enough free
-unified memory. If vLLM rejects startup with an insufficient Metal KV-cache
-budget, the exact machine is out of headroom at this precision; do not raise
-the context beyond 128K or enable concurrent sequences. A quantized checkpoint
-or a runtime with compressed KV cache is then required.
+The checkpoint is an approximately 10.25 GB FP16 file and supports 128K
+natively, but the available KV-cache budget depends on the other processes
+using unified memory. If vLLM rejects startup with an insufficient Metal
+KV-cache budget, reduce `VLLM_MAX_MODEL_LEN` further before considering a
+quantized checkpoint or compressed KV cache.
 
 > `--default-chat-template-kwargs '{"enable_thinking": true}'` turns on Gemma's
 > built-in thinking mode: the chat template injects `<|think|>` at the start of
@@ -207,9 +207,12 @@ run this on the native arm64 16 GB M4 Mac after installing vLLM Metal:
 zsh backend/scripts/smoke_vllm_metal_128k.zsh
 ```
 
-Add `VLLM_SMOKE_PROBE=1` to send a real approximately 125K-token request with
-one output token. This is slower and more memory-intensive, but it is the
-strongest available smoke check for long-context acceptance.
+The smoke script defaults to the safe 65,536-token profile. Set
+`VLLM_SMOKE_MAX_MODEL_LEN=128000` only when the Mac has enough free unified
+memory for the full native context. Add `VLLM_SMOKE_PROBE=1` to send a real
+near-limit request with one output token. This is slower and more
+memory-intensive, but it is the strongest available smoke check for
+long-context acceptance.
 
 The smoke test starts the exact checkpoint on port 18000, waits for `/health`,
 checks `/v1/models`, and prints the startup log path. It terminates only the
@@ -257,6 +260,7 @@ VLLM_EXECUTABLE=~/.venv-vllm-metal/bin/vllm
 VLLM_SERVE_MODEL=Legal-verse/InaVerdict-gemma-v2
 VLLM_IDLE_TIMEOUT_SECONDS=300
 VLLM_STARTUP_TIMEOUT_SECONDS=600
+VLLM_MAX_MODEL_LEN=65536
 CORS_ORIGINS=*
 ```
 
@@ -286,6 +290,9 @@ zsh backend/launchd/deploy.sh
 ```
 
 Check the gateway and vLLM state:
+
+tail -f ~/Library/Application\ Support/SinergiServer/logs/gateway-error.log \
+  ~/Library/Application\ Support/SinergiServer/logs/gateway.log \
 
 ```bash
 curl http://127.0.0.1:8001/health

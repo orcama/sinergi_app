@@ -98,7 +98,7 @@ APPLESCRIPT
 if [[ "$mode" == "interactive" ]]; then
   frontend_command="cd ${(q)frontend_dir}; echo 'Sinergi frontend'; npm run dev; echo; echo 'Frontend stopped. Press Ctrl-D to close.'; exec zsh"
   backend_command="cd ${(q)source_dir}; echo 'Sinergi FastAPI backend'; uv run --env-file .env fastapi dev app/main.py --host 127.0.0.1 --port 8001; echo; echo 'Backend stopped. Press Ctrl-D to close.'; exec zsh"
-  vllm_command="source ${(q)HOME}/.venv-vllm-metal/bin/activate; export VLLM_METAL_USE_PAGED_ATTENTION=1 VLLM_METAL_MEMORY_FRACTION=0.90 VLLM_MLX_DEVICE=gpu; echo 'Sinergi vLLM'; vllm serve Legal-verse/InaVerdict-gemma-v2 --served-model-name Legal-verse/InaVerdict-gemma-v2 --host 127.0.0.1 --port 8000 --max-model-len 128000 --max-num-seqs 1 --max-num-batched-tokens 512 --default-chat-template-kwargs '{\"enable_thinking\": true}' --reasoning-parser gemma4; echo; echo 'vLLM stopped. Press Ctrl-D to close.'; exec zsh"
+  vllm_command="source ${(q)HOME}/.venv-vllm-metal/bin/activate; export VLLM_METAL_USE_PAGED_ATTENTION=1 VLLM_METAL_MEMORY_FRACTION=0.90 VLLM_MLX_DEVICE=gpu; echo 'Sinergi vLLM'; vllm serve Legal-verse/InaVerdict-gemma-v2 --served-model-name Legal-verse/InaVerdict-gemma-v2 --host 127.0.0.1 --port 8000 --max-model-len 65536 --max-num-seqs 1 --max-num-batched-tokens 512 --default-chat-template-kwargs '{\"enable_thinking\": true}' --reasoning-parser gemma4; echo; echo 'vLLM stopped. Press Ctrl-D to close.'; exec zsh"
 
   open_terminal "Sinergi Frontend" "$frontend_command"
   open_terminal "Sinergi FastAPI" "$backend_command"
