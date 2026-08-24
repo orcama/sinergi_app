@@ -122,6 +122,30 @@ If `WANDB_API_KEY` is left empty, the gateway falls back to the API key
 embedded in `backend/models.md`. That file is git-ignored, so it only exists on
 machines that have it.
 
+### Firebase credentials in production
+
+The service-account JSON is only a backend credential. It must never be placed
+in the Next.js `NEXT_PUBLIC_*` environment or committed to the repository.
+The backend accepts these deployment patterns:
+
+- On Google Cloud, leave `FIREBASE_SERVICE_ACCOUNT_PATH` and
+  `FIREBASE_SERVICE_ACCOUNT_JSON` unset and grant the runtime service account
+  access to Firebase Authentication, Firestore, and Storage. The Admin SDK
+  uses Application Default Credentials.
+- On a platform that provides secrets as environment variables, store the
+  complete JSON object in a secret named `FIREBASE_SERVICE_ACCOUNT_JSON`.
+- For local development, keep using `FIREBASE_SERVICE_ACCOUNT_PATH` and the
+  ignored JSON file.
+
+`FIREBASE_STORAGE_BUCKET` should be set to the project's current bucket name,
+for example `sinergi-app-89eed.firebasestorage.app`. `FIRESTORE_DATABASE_ID`
+defaults to `(default)`.
+
+Firebase App Hosting deploys this repository's Next.js app. The Python gateway
+under `backend/` is a separate service; its public URL must be supplied to the
+frontend through `NEXT_PUBLIC_BACKEND_URL`. A Cloudflare Quick Tunnel URL is
+temporary and changes after restarts, so it is suitable for testing only.
+
 ## Running locally in two terminals
 
 This manual mode is useful for development and troubleshooting. For the
