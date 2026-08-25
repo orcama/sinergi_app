@@ -146,3 +146,36 @@ class ProjectItem(BaseModel):
     chat_ids: list[str]
     file_ids: list[str]
     instructions: str | None = None
+
+
+class StoredChatMessage(BaseModel):
+    id: str = Field(min_length=1, max_length=255)
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=2_000_000)
+    thinking: str | None = Field(default=None, max_length=2_000_000)
+    thinking_seconds: float | None = None
+    sources: list[dict] | None = None
+
+
+class ChatSessionSaveRequest(BaseModel):
+    id: str | None = Field(default=None, max_length=255)
+    title: str = Field(default="", max_length=255)
+    messages: list[StoredChatMessage] = Field(default_factory=list, max_length=500)
+    is_pinned: bool = False
+    model: str | None = Field(default=None, max_length=32)
+    provider: str | None = Field(default=None, max_length=32)
+    context_limit: int | None = None
+    project_id: str | None = Field(default=None, max_length=255)
+
+
+class ChatSessionItem(BaseModel):
+    id: str
+    title: str
+    messages: list[StoredChatMessage]
+    is_pinned: bool
+    model: str | None
+    provider: str | None
+    context_limit: int | None
+    project_id: str | None
+    created_at: str
+    updated_at: str

@@ -7,9 +7,15 @@ from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from app.config import MODEL_ID, PROVIDER_BY_ID, SYSTEM_PROMPT, VLLM_BASE_URL, _vllm_model_cache, provider_api_key, resolve_vllm_model
-from app.schemas import ChatRequest, ChatResponse, Message, ProviderConfig
+from app.core.firebase import db
+from app.schemas import ChatRequest, ChatResponse, ChatSessionItem, ChatSessionSaveRequest, Message, ProviderConfig, StoredChatMessage
 from app.services.content_service import expand_content, flatten_content
 from app.vllm_on_demand import VllmOnDemandManager, VllmStartupError
+
+from datetime import datetime, timezone
+import uuid
+from fastapi.responses import JSONResponse
+from firebase_admin import firestore
 
 
 async def _prepare(body: ChatRequest, request: Request):
@@ -120,3 +126,90 @@ async def chat_stream(body: ChatRequest, request: Request) -> StreamingResponse:
                 await manager.release()
 
     return StreamingResponse(stream(), headers={"Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
+
+
+def _iso(value) -> str:
+    if value is None:
+        return datetime.now(timezone.utc).isoformat()
+    return value.isoformat() if hasattr(value, "isoformat") else str(value)
+
+
+def _owned_chat(chat_id: str, uid: str):
+    ref = db.collection("chats").document(chat_id)
+    snap = ref.get()
+    if not snap.exists:
+        raise HTTPException(status_code=404, detail="Chat tidak ditemukan.")
+    data = snap.to_dict()
+    if data.get("user_id") != uid:
+        raise HTTPException(status_code=403, detail="Akses ditolak.")
+    return ref, data
+
+
+def _to_item(chat_id: str, data: dict) -> ChatSessionItem:
+    messages = [
+        StoredChatMessage(
+            id=m.get("id", ""),
+            role=m.get("role", "user"),
+            content=m.get("content", ""),
+            thinking=m.get("thinking"),
+            thinking_seconds=m.get("thinking_seconds"),
+            sources=m.get("sources"),
+        )
+        for m in (data.get("messages") or [])
+    ]
+    return ChatSessionItem(
+        id=chat_id,
+        title=data.get("title", ""),
+        messages=messages,
+        is_pinned=bool(data.get("is_pinned", False)),
+        model=data.get("model"),
+        provider=data.get("provider"),
+        context_limit=data.get("context_limit"),
+        project_id=data.get("project_id"),
+        created_at=_iso(data.get("created_at") or data.get("updated_at")),
+        updated_at=_iso(data.get("updated_at") or data.get("created_at")),
+    )
+
+
+def chat_session_save(body: ChatSessionSaveRequest, user: dict) -> ChatSessionItem:
+    uid = user["uid"]
+    chat_id = body.id or str(uuid.uuid4())
+    now = firestore.SERVER_TIMESTAMP
+    payload = {
+        "user_id": uid,
+        "title": body.title,
+        "messages": [m.model_dump(mode="json", exclude_none=True) for m in body.messages],
+        "is_pinned": body.is_pinned,
+        "model": body.model,
+        "provider": body.provider,
+        "context_limit": body.context_limit,
+        "project_id": body.project_id or "",
+        "updated_at": now,
+    }
+    ref = db.collection("chats").document(chat_id)
+    snap = ref.get()
+    if snap.exists and snap.to_dict().get("user_id") != uid:
+        raise HTTPException(status_code=403, detail="Akses ditolak.")
+    if not snap.exists:
+        payload["created_at"] = now
+    ref.set(payload, merge=True)
+    return _to_item(chat_id, ref.get().to_dict())
+
+
+def chat_session_get(chat_id: str, user: dict) -> ChatSessionItem:
+    _, data = _owned_chat(chat_id, user["uid"])
+    return _to_item(chat_id, data)
+
+
+def chat_session_list(user: dict) -> JSONResponse:
+    items = []
+    for doc in db.collection("chats").where("user_id", "==", user["uid"]).stream():
+        items.append(_to_item(doc.id, doc.to_dict()).model_dump(mode="json"))
+    items.sort(key=lambda item: item["updated_at"], reverse=True)
+    return JSONResponse(content={"chats": items})
+
+
+def chat_session_delete(chat_id: str, user: dict) -> JSONResponse:
+    ref, _ = _owned_chat(chat_id, user["uid"])
+    ref.delete()
+    return JSONResponse(content={"ok": True, "id": chat_id})
