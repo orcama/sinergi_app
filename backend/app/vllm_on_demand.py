@@ -54,7 +54,7 @@ class VllmOnDemandConfig:
             "--port",
             "8000",
             "--max-model-len",
-            os.getenv("VLLM_MAX_MODEL_LEN", "128000"),
+            os.getenv("VLLM_MAX_MODEL_LEN", "65536"),
             "--max-num-seqs",
             os.getenv("VLLM_MAX_NUM_SEQS", "1"),
             "--max-num-batched-tokens",

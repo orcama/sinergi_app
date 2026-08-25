@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Library,
   Plus,
@@ -407,6 +407,18 @@ function HistoryPage() {
 
   const chatSessions = useChatStore((s) => s.chatSessions);
   const deleteChat = useChatStore((s) => s.deleteChat);
+  const loadSessions = useChatStore((s) => s.loadSessions);
+  const setSessions = useChatStore((s) => s.setSessions);
+  const { user, loading } = useAuth();
+
+  useEffect(() => {
+    if (loading) return;
+    if (user) {
+      loadSessions().catch(() => {});
+    } else {
+      setSessions([], null);
+    }
+  }, [user, loading, loadSessions, setSessions]);
 
   const filteredSessions = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();

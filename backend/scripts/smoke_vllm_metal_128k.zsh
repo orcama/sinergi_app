@@ -7,8 +7,9 @@ set -euo pipefail
 
 model="${VLLM_SERVE_MODEL:-Legal-verse/InaVerdict-gemma-v2}"
 port="${VLLM_SMOKE_PORT:-18000}"
-log_path="${VLLM_SMOKE_LOG:-${TMPDIR:-/tmp}/sinergi-vllm-128k.log}"
+log_path="${VLLM_SMOKE_LOG:-${TMPDIR:-/tmp}/sinergi-vllm-metal.log}"
 executable="${VLLM_EXECUTABLE:-$HOME/.venv-vllm-metal/bin/vllm}"
+max_model_len="${VLLM_SMOKE_MAX_MODEL_LEN:-65536}"
 
 if [[ "$(uname -m)" != "arm64" ]]; then
   print -u2 "vLLM Metal smoke test requires native arm64 macOS."
@@ -26,7 +27,7 @@ command=(
   --served-model-name "$model"
   --host 127.0.0.1
   --port "$port"
-  --max-model-len 128000
+  --max-model-len "$max_model_len"
   --max-num-seqs 1
   --max-num-batched-tokens 512
 )
@@ -64,7 +65,7 @@ done
 metadata="$(curl -fsS "http://127.0.0.1:${port}/v1/models")"
 metadata_path="${log_path}.metadata.json"
 print "$metadata" >"$metadata_path"
-MODEL_EXPECTED="$model" python3 - "$metadata_path" <<'PY'
+MODEL_EXPECTED="$model" MAX_MODEL_LEN="$max_model_len" python3 - "$metadata_path" <<'PY'
 import json, sys
 import os
 with open(sys.argv[1], encoding="utf-8") as stream:
@@ -73,19 +74,20 @@ models = payload.get("data") or []
 assert models, "vLLM returned no models"
 model = models[0]
 expected = os.environ["MODEL_EXPECTED"]
+expected_max_len = int(os.environ["MAX_MODEL_LEN"])
 if model.get("id") != expected:
     raise SystemExit(f"live server returned {model.get('id')!r}, expected {expected!r}")
 reported = model.get("max_model_len") or model.get("max_context_length")
-if reported is not None and int(reported) < 128000:
+if reported is not None and int(reported) < expected_max_len:
     raise SystemExit(f"live server reports only {reported} tokens")
 print(f"live model: {model.get('id')}")
-print(f"reported max context: {reported or 'not exposed by endpoint; startup succeeded with --max-model-len 128000'}")
+print(f"reported max context: {reported or f'not exposed by endpoint; startup succeeded with --max-model-len {expected_max_len}'}")
 PY
 rm -f "$metadata_path"
 
 if [[ "${VLLM_SMOKE_PROBE:-0}" == "1" ]]; then
   request_path="${log_path}.probe.json"
-  MODEL_EXPECTED="$model" python3 - "$request_path" <<'PY'
+  MODEL_EXPECTED="$model" MAX_MODEL_LEN="$max_model_len" python3 - "$request_path" <<'PY'
 import json
 import os
 import sys
@@ -94,7 +96,7 @@ import sys
 # Leave headroom for the chat template and the one-token response.
 payload = {
     "model": os.environ["MODEL_EXPECTED"],
-    "messages": [{"role": "user", "content": "probe " * 125000}],
+    "messages": [{"role": "user", "content": "probe " * max(1, int(int(os.environ["MAX_MODEL_LEN"]) * 0.95))}],
     "max_tokens": 1,
     "temperature": 0,
 }
@@ -104,8 +106,8 @@ PY
   curl -fsS "http://127.0.0.1:${port}/v1/chat/completions" \
     -H 'Content-Type: application/json' \
     --data-binary "@$request_path" \
-    | MODEL_EXPECTED="$model" python3 -c 'import json, os, sys; payload=json.load(sys.stdin); assert payload.get("choices"), payload; print("125K probe returned from {}".format(os.environ["MODEL_EXPECTED"]))'
+    | MODEL_EXPECTED="$model" MAX_MODEL_LEN="$max_model_len" python3 -c 'import json, os, sys; payload=json.load(sys.stdin); assert payload.get("choices"), payload; print("{}-token probe returned from {}".format(os.environ["MAX_MODEL_LEN"], os.environ["MODEL_EXPECTED"]))'
   rm -f "$request_path"
 fi
 
-print "128K Metal smoke test passed; startup log: $log_path"
+print "${max_model_len}-token Metal smoke test passed; startup log: $log_path"

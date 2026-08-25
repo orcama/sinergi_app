@@ -10,8 +10,10 @@
     <string>/opt/homebrew/bin/cloudflared</string>
     <string>tunnel</string>
     <string>--no-autoupdate</string>
-    <string>--url</string>
-    <string>http://127.0.0.1:8001</string>
+    <string>--config</string>
+    <string>/Users/galihmac/.cloudflared/config.yml</string>
+    <string>run</string>
+    <string>sinergi-api</string>
   </array>
 
   <key>RunAtLoad</key>

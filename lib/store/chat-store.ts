@@ -1,5 +1,28 @@
 ﻿import { create } from "zustand";
 import type { ChatMessage, ChatSession } from "@/lib/types";
+import { auth } from "@/lib/firebase";
+import {
+  deleteChatSession,
+  listChatSessions,
+  saveChatSession,
+} from "@/lib/chat-api";
+
+const persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function persistSession(session: ChatSession | null) {
+  if (!session || !auth.currentUser) return;
+  const existing = persistTimers.get(session.id);
+  if (existing) clearTimeout(existing);
+  persistTimers.set(
+    session.id,
+    setTimeout(() => {
+      persistTimers.delete(session.id);
+      saveChatSession(session).catch(() => {
+        // non-fatal: gagal menyimpan tidak menghentikan percakapan
+      });
+    }, 800)
+  );
+}
 
 function uid(prefix: string): string {
   const cryptoObj =
@@ -37,6 +60,8 @@ interface ChatState {
   setIsLoading: (loading: boolean) => void;
   newSession: () => void;
   selectSession: (id: string) => void;
+  setSessions: (sessions: ChatSession[], activeId?: string | null) => void;
+  loadSessions: () => Promise<void>;
   togglePin: (id: string) => void;
   deleteChat: (id: string) => void;
   getSession: (id: string) => ChatSession | null;
@@ -91,18 +116,37 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   selectSession: (id) => set({ activeSessionId: id }),
 
-  togglePin: (id) =>
+  setSessions: (sessions, activeId) =>
     set((state) => ({
-      chatSessions: state.chatSessions.map((s) =>
-        s.id === id ? { ...s, isPinned: !s.isPinned } : s
-      ),
+      chatSessions: sessions,
+      activeSessionId:
+        activeId !== undefined ? activeId : state.activeSessionId,
     })),
+
+  loadSessions: async () => {
+    if (!auth.currentUser) return;
+    const sessions = await listChatSessions();
+    get().setSessions(sessions);
+  },
+
+  togglePin: (id) =>
+    set((state) => {
+      const sessions = state.chatSessions.map((s) =>
+        s.id === id ? { ...s, isPinned: !s.isPinned } : s
+      );
+      const toggled = sessions.find((s) => s.id === id) ?? null;
+      persistSession(toggled);
+      return { chatSessions: sessions };
+    }),
 
   deleteChat: (id) =>
     set((state) => {
       const chatSessions = state.chatSessions.filter((s) => s.id !== id);
       const activeSessionId =
         state.activeSessionId === id ? null : state.activeSessionId;
+      if (auth.currentUser) {
+        deleteChatSession(id).catch(() => {});
+      }
       return {
         chatSessions,
         activeSessionId,
@@ -113,8 +157,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   getSession: (id) => get().chatSessions.find((s) => s.id === id) ?? null,
 
   setSessionModel: (id, model) =>
-    set((state) => ({
-      chatSessions: state.chatSessions.map((s) =>
+    set((state) => {
+      const chatSessions = state.chatSessions.map((s) =>
         s.id === id
           ? {
               ...s,
@@ -124,12 +168,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 DEFAULT_CONTEXT_LIMITS[s.provider ?? "local"],
             }
           : s
-      ),
-    })),
+      );
+      persistSession(chatSessions.find((s) => s.id === id) ?? null);
+      return { chatSessions };
+    }),
 
   setSessionProvider: (id, provider) =>
-    set((state) => ({
-      chatSessions: state.chatSessions.map((s) =>
+    set((state) => {
+      const chatSessions = state.chatSessions.map((s) =>
         s.id === id
           ? {
               ...s,
@@ -139,8 +185,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 DEFAULT_CONTEXT_LIMITS[provider],
             }
           : s
-      ),
-    })),
+      );
+      persistSession(chatSessions.find((s) => s.id === id) ?? null);
+      return { chatSessions };
+    }),
 
   setProviderContextLimits: (limits) =>
     set((state) => ({
@@ -173,46 +221,56 @@ export const useChatStore = create<ChatState>((set, get) => ({
             state.providerContextLimits.local ?? DEFAULT_CONTEXT_LIMITS.local,
         };
         createdId = newSession.id;
+        persistSession(newSession);
         return {
           chatSessions: [newSession, ...state.chatSessions],
           activeSessionId: newSession.id,
           messages: [],
         };
       }
-      return {
-        chatSessions: state.chatSessions.map((s) =>
-          s.id === sessionId
-            ? { ...s, messages: [...s.messages, message] }
-            : s
-        ),
-      };
+      const sessions = state.chatSessions.map((s) =>
+        s.id === sessionId
+          ? { ...s, messages: [...s.messages, message] }
+          : s
+      );
+      persistSession(sessions.find((s) => s.id === sessionId) ?? null);
+      return { chatSessions: sessions };
     });
     return createdId ?? sessionId ?? "";
   },
 
   upsertSessionMessage: (sessionId, message, options) =>
-    set((state) => ({
-      chatSessions: state.chatSessions.map((s) => {
+    set((state) => {
+      let updated: ChatSession | null = null;
+      const chatSessions = state.chatSessions.map((s) => {
         if (s.id !== sessionId) return s;
         let messages = s.messages;
         if (options?.removeLoading) {
           messages = messages.filter((m) => !m.isLoading);
         }
         const existing = messages.find((m) => m.id === message.id);
-        if (existing) {
-          return {
-            ...s,
-            messages: messages.map((m) => (m.id === message.id ? message : m)),
-          };
-        }
-        return { ...s, messages: [...messages, message] };
-      }),
-    })),
+        const next =
+          existing
+            ? {
+                ...s,
+                messages: messages.map((m) =>
+                  m.id === message.id ? message : m
+                ),
+              }
+            : { ...s, messages: [...messages, message] };
+        updated = next;
+        return next;
+      });
+      if (updated) persistSession(updated);
+      return { chatSessions };
+    }),
 
   setSessionTitle: (sessionId, title) =>
-    set((state) => ({
-      chatSessions: state.chatSessions.map((s) =>
+    set((state) => {
+      const chatSessions = state.chatSessions.map((s) =>
         s.id === sessionId ? { ...s, title } : s
-      ),
-    })),
+      );
+      persistSession(chatSessions.find((s) => s.id === sessionId) ?? null);
+      return { chatSessions };
+    }),
 }));

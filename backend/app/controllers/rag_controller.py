@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 
 from fastapi import HTTPException, Request
@@ -13,10 +14,13 @@ from app.rag.vector_store import cosine_score, query_vector
 from app.schemas import RagIngestRequest, RagIngestResponse, RagQueryRequest, RagQueryResponse, RagHit, RagSection, PdfExtractResponse
 from app.services.content_service import estimate_tokens, extract_pdf_text
 
+logger = logging.getLogger(__name__)
+
 
 def pdf_extract(body: RagIngestRequest) -> PdfExtractResponse:
     text = extract_pdf_text(body.data, max_chars=None, collapse=False)
     if not text:
+        logger.warning("PDF extraction returned no text for %s", body.name)
         raise HTTPException(status_code=422, detail=f"PDF '{body.name}' tidak dapat dibaca (tidak ada teks ter-extract).")
     return PdfExtractResponse(name=body.name, text=text, char_count=len(text), token_count=estimate_tokens(text))
 
@@ -24,6 +28,7 @@ def pdf_extract(body: RagIngestRequest) -> PdfExtractResponse:
 def rag_ingest(body: RagIngestRequest, request: Request) -> RagIngestResponse:
     text = extract_pdf_text(body.data, max_chars=None, collapse=False)
     if not text:
+        logger.warning("RAG PDF extraction returned no text for %s", body.name)
         raise HTTPException(status_code=422, detail=f"PDF '{body.name}' tidak dapat dibaca (tidak ada teks ter-extract).")
     doc_id = str(uuid.uuid4())
     request.app.state.rag_docs[doc_id] = {"name": body.name, "text": text}

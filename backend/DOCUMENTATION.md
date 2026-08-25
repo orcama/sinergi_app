@@ -109,6 +109,8 @@ MODEL_ID=Legal-verse/InaVerdict-gemma-v2
 VLLM_BASE_URL=http://127.0.0.1:8000
 CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
 REQUEST_TIMEOUT_SECONDS=300
+# The model is instructed to perform its reasoning in Bahasa Indonesia.
+# CHAT_SYSTEM_PROMPT=Optional custom prompt; the Indonesian reasoning instruction remains appended.
 
 WANDB_BASE_URL=https://api.inference.wandb.ai
 WANDB_MODEL_ID=MiniMaxAI/MiniMax-M3
@@ -121,6 +123,32 @@ DEFAULT_PROVIDER=vllm
 If `WANDB_API_KEY` is left empty, the gateway falls back to the API key
 embedded in `backend/models.md`. That file is git-ignored, so it only exists on
 machines that have it.
+
+### Firebase credentials in production
+
+The service-account JSON is only a backend credential. It must never be placed
+in the Next.js `NEXT_PUBLIC_*` environment or committed to the repository.
+The backend accepts these deployment patterns:
+
+- On Google Cloud, leave `FIREBASE_SERVICE_ACCOUNT_PATH` and
+  `FIREBASE_SERVICE_ACCOUNT_JSON` unset and grant the runtime service account
+  access to Firebase Authentication, Firestore, and Storage. The Admin SDK
+  uses Application Default Credentials.
+- On a platform that provides secrets as environment variables, store the
+  complete JSON object in a secret named `FIREBASE_SERVICE_ACCOUNT_JSON`.
+- For local development, keep using `FIREBASE_SERVICE_ACCOUNT_PATH` and the
+  ignored JSON file.
+
+`FIREBASE_STORAGE_BUCKET` should be set to the project's current bucket name,
+for example `sinergi-app-89eed.firebasestorage.app`. `FIRESTORE_DATABASE_ID`
+defaults to `(default)`.
+
+Firebase App Hosting deploys this repository's Next.js app. The Python gateway
+under `backend/` is a separate service. Its stable public URL is
+`https://api.legal-verse.id`, supplied to the frontend through
+`NEXT_PUBLIC_API_BASE_URL` and `NEXT_PUBLIC_BACKEND_URL`. The URL remains the
+same after backend or tunnel restarts; availability still depends on the Mac
+and its Cloudflare Tunnel being online.
 
 ## Running locally in two terminals
 
@@ -136,7 +164,7 @@ vllm serve Legal-verse/InaVerdict-gemma-v2 \
   --served-model-name Legal-verse/InaVerdict-gemma-v2 \
   --host 127.0.0.1 \
   --port 8000 \
-  --max-model-len 128000 \
+  --max-model-len 65536 \
   --max-num-seqs 1 \
   --max-num-batched-tokens 512 \
   --default-chat-template-kwargs '{"enable_thinking": true}' \
@@ -148,20 +176,20 @@ the Gemma 4 E2B architecture reported by the checkpoint configuration; it is
 not a DeepSeek or Gemma 3 deployment. Its config reports
 `max_position_embeddings: 131072`, so 128,000 is within the model-native limit.
 
-For a 16 GB M4, the serving profile deliberately uses one sequence and a
-512-token scheduler batch. This trades prefill throughput for the requested
-long context and lower activation pressure. Set
+For a 16 GB M4, the serving profile deliberately uses one sequence, a 512-token
+scheduler batch, and a 65,536-token context. This trades prefill throughput and
+maximum context for a KV-cache budget that fits alongside the model in unified
+memory. Set
 `VLLM_METAL_USE_PAGED_ATTENTION=1` and
 `VLLM_METAL_MEMORY_FRACTION=0.90` in the vLLM shell. On current Metal paged
 attention, the generic `--gpu-memory-utilization` flag is not the controlling
 KV-cache setting; the Metal-specific environment variable is.
 
-The checkpoint is an approximately 10.25 GB FP16 file, so 128K is a serving
-target, not a promise that every macOS process state will have enough free
-unified memory. If vLLM rejects startup with an insufficient Metal KV-cache
-budget, the exact machine is out of headroom at this precision; do not raise
-the context beyond 128K or enable concurrent sequences. A quantized checkpoint
-or a runtime with compressed KV cache is then required.
+The checkpoint is an approximately 10.25 GB FP16 file and supports 128K
+natively, but the available KV-cache budget depends on the other processes
+using unified memory. If vLLM rejects startup with an insufficient Metal
+KV-cache budget, reduce `VLLM_MAX_MODEL_LEN` further before considering a
+quantized checkpoint or compressed KV cache.
 
 > `--default-chat-template-kwargs '{"enable_thinking": true}'` turns on Gemma's
 > built-in thinking mode: the chat template injects `<|think|>` at the start of
@@ -183,9 +211,12 @@ run this on the native arm64 16 GB M4 Mac after installing vLLM Metal:
 zsh backend/scripts/smoke_vllm_metal_128k.zsh
 ```
 
-Add `VLLM_SMOKE_PROBE=1` to send a real approximately 125K-token request with
-one output token. This is slower and more memory-intensive, but it is the
-strongest available smoke check for long-context acceptance.
+The smoke script defaults to the safe 65,536-token profile. Set
+`VLLM_SMOKE_MAX_MODEL_LEN=128000` only when the Mac has enough free unified
+memory for the full native context. Add `VLLM_SMOKE_PROBE=1` to send a real
+near-limit request with one output token. This is slower and more
+memory-intensive, but it is the strongest available smoke check for
+long-context acceptance.
 
 The smoke test starts the exact checkpoint on port 18000, waits for `/health`,
 checks `/v1/models`, and prints the startup log path. It terminates only the
@@ -196,7 +227,6 @@ at launch.
 ### Terminal 2: start FastAPI manually
 
 From the repository root:
-a
 
 ```bash
 cd backend
@@ -233,6 +263,7 @@ VLLM_EXECUTABLE=~/.venv-vllm-metal/bin/vllm
 VLLM_SERVE_MODEL=Legal-verse/InaVerdict-gemma-v2
 VLLM_IDLE_TIMEOUT_SECONDS=300
 VLLM_STARTUP_TIMEOUT_SECONDS=600
+VLLM_MAX_MODEL_LEN=65536
 CORS_ORIGINS=*
 ```
 
@@ -242,21 +273,24 @@ runtime copy outside `Documents` because macOS privacy controls restrict
 background services there. Install it for the current Mac user:
 
 ```bash
-cd /Users/galihmac/Documents/sinergi_app
-zsh backend/launchd/deploy.sh
-```
-
-The default deployment is an interactive development launcher: it keeps the
-Cloudflare tunnel under `launchd`, then opens separate Terminal windows for
-the frontend, FastAPI dev server, and vLLM so each process can be traced live.
-It stops the managed gateway first to avoid a second process binding port
-8001. For the original background-only launchd behavior, use:
-
-```bash
+cd /Users/galihmac/Documents/sinergi_app_deploy
 zsh backend/launchd/deploy.sh --managed
 ```
 
-Check the gateway and vLLM state:
+`--managed` is the recommended on-demand setup: it keeps only the FastAPI
+gateway and Cloudflare tunnel under LaunchAgent, while vLLM starts on the first
+model request and is stopped after the idle timeout. The source `backend/.env`
+is copied into the runtime directory during deployment.
+
+For interactive troubleshooting only, use the default deployment mode. It
+keeps the Cloudflare tunnel under `launchd`, then opens separate Terminal
+windows for the frontend, FastAPI dev server, and vLLM so each process can be
+traced live. It stops the managed gateway first to avoid a second process
+binding port 8001:
+
+```bash
+zsh backend/launchd/deploy.sh
+```
 
 ```bash
 curl http://127.0.0.1:8001/health
@@ -264,6 +298,38 @@ launchctl print gui/$(id -u)/com.sinergi.gateway
 tail -f ~/Library/Application\ Support/SinergiServer/logs/gateway-error.log \
   ~/Library/Application\ Support/SinergiServer/logs/gateway.log \
   ~/Library/Application\ Support/SinergiServer/logs/vllm.log
+```
+
+Restart the gateway without changing the public URL:
+
+```bash
+launchctl kickstart -k "gui/$(id -u)/com.sinergi.gateway"
+```
+
+Restart both the gateway and the stable Cloudflare Tunnel:
+
+```bash
+launchctl kickstart -k "gui/$(id -u)/com.sinergi.gateway"
+launchctl kickstart -k "gui/$(id -u)/com.sinergi.tunnel"
+```
+
+Terminate the gateway and unload it so `KeepAlive` does not start it again:
+
+```bash
+launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.sinergi.gateway.plist"
+```
+
+Terminate the public tunnel as well:
+
+```bash
+launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.sinergi.tunnel.plist"
+```
+
+Load a terminated service again:
+
+```bash
+launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.sinergi.gateway.plist"
+launchctl kickstart -k "gui/$(id -u)/com.sinergi.gateway"
 ```
 
 When vLLM is asleep, `/health` still returns HTTP 200 because the gateway can
@@ -296,12 +362,11 @@ configured not to sleep while connected to AC power. If the macOS firewall
 asks whether Python/FastAPI may accept incoming connections, allow it for the
 trusted local network.
 
-### Access from any network (public HTTPS test URL)
+### Access from any network (public HTTPS URL)
 
-The deployment also runs a domainless Cloudflare Quick Tunnel. It exposes the
-
-gateway through a public HTTPS URL with no authentication. It is intended only
-for testing.
+The deployment runs a named Cloudflare Tunnel at `https://api.legal-verse.id`.
+It exposes the gateway through a public HTTPS URL with no authentication, so
+protect production endpoints appropriately.
 
 Show the current URL on the Mac:
 
@@ -309,13 +374,13 @@ Show the current URL on the Mac:
 zsh backend/launchd/show-access.sh
 ```
 
-`zsh backend/launchd/deploy.sh` also prints the newly allocated URL every time
-it starts/restarts the public tunnel. The FastAPI startup log repeats the URL.
+`zsh backend/launchd/deploy.sh` prints the stable API URL. The FastAPI startup
+log repeats it.
 
 Use it from a phone or any other network:
 
 ```bash
-PUBLIC_URL=https://<current-url>.trycloudflare.com
+PUBLIC_URL=https://api.legal-verse.id
 
 # Cold-start vLLM without holding a public request open.
 curl -X POST "$PUBLIC_URL/api/vllm/wake"
@@ -332,13 +397,10 @@ curl "$PUBLIC_URL/api/chat" \
   }'
 ```
 
-Because no domain is configured, this uses Cloudflare's development Quick
-Tunnel service. The random URL can change after the tunnel or Mac restarts, has
-no uptime guarantee, and does not support SSE. Use the non-streaming
-`POST /api/chat` endpoint remotely. Its proxy timeout can also be shorter than
-the model cold start, which is why remote clients should call
-`POST /api/vllm/wake`, poll `/health`, and then call `/api/chat`. Run
-`show-access.sh` again to retrieve the new URL after a restart.
+The named tunnel keeps this hostname after tunnel or Mac restarts. The Mac must
+remain online, and the proxy timeout can be shorter than the model cold start,
+so remote clients should call `POST /api/vllm/wake`, poll `/health`, and then
+call `/api/chat`.
 
 ## Backend endpoints
 

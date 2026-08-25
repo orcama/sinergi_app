@@ -43,7 +43,8 @@ app.include_router(project_router)
 
 # Compatibility exports for existing backend consumers and tests.
 from app.config import (  # noqa: E402,F401
-    DEFAULT_MODEL, DEFAULT_SYSTEM_PROMPT, MODEL_ID, PROVIDER_BY_ID, WANDB_MODEL_ID,
+    DEFAULT_MODEL, DEFAULT_SYSTEM_PROMPT, INDONESIAN_REASONING_INSTRUCTION,
+    MODEL_ID, PROVIDER_BY_ID, WANDB_MODEL_ID, build_system_prompt,
     current_public_url, load_providers,
 )
 from app.services.content_service import extract_pdf_text, flatten_content  # noqa: E402,F401

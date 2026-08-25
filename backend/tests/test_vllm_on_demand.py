@@ -20,7 +20,7 @@ class FakeProcess:
         return 0
 
 
-def test_default_metal_command_exposes_128k_with_single_sequence(monkeypatch, tmp_path) -> None:
+def test_default_metal_command_exposes_safe_64k_profile_with_single_sequence(monkeypatch, tmp_path) -> None:
     for name in (
         "VLLM_MAX_MODEL_LEN",
         "VLLM_MAX_NUM_SEQS",
@@ -34,7 +34,7 @@ def test_default_metal_command_exposes_128k_with_single_sequence(monkeypatch, tm
     )
 
     assert "--max-model-len" in config.command
-    assert config.command[config.command.index("--max-model-len") + 1] == "128000"
+    assert config.command[config.command.index("--max-model-len") + 1] == "65536"
     assert config.command[config.command.index("--max-num-seqs") + 1] == "1"
     assert config.command[config.command.index("--max-num-batched-tokens") + 1] == "512"
     assert "--gpu-memory-utilization" not in config.command

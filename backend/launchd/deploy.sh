@@ -34,28 +34,19 @@ cd "$runtime_dir"
 cp "$gateway_source" "$gateway_target"
 cp "$tunnel_source" "$tunnel_target"
 
-launchctl bootout "$user_domain" "$tunnel_target" 2>/dev/null || true
 tunnel_log="$runtime_dir/logs/tunnel-error.log"
-previous_lines=0
-if [[ -f "$tunnel_log" ]]; then
-  previous_lines=$(wc -l < "$tunnel_log")
+public_url="https://api.legal-verse.id"
+tunnel_needs_start=1
+if launchctl print "$user_domain/com.sinergi.tunnel" >/dev/null 2>&1; then
+  tunnel_needs_start=0
 fi
-first_new_line=$((previous_lines + 1))
 
-launchctl bootstrap "$user_domain" "$tunnel_target"
-launchctl enable "$user_domain/com.sinergi.tunnel"
-launchctl kickstart -k "$user_domain/com.sinergi.tunnel"
-
-public_url=""
-for attempt in {1..30}; do
-  if [[ -f "$tunnel_log" ]]; then
-    public_url=$(tail -n +$first_new_line "$tunnel_log" \
-      | sed -nE 's/.*(https:\/\/[a-z-]+\.trycloudflare\.com).*/\1/p' \
-      | tail -1)
-  fi
-  [[ -n "$public_url" ]] && break
-  sleep 1
-done
+if [[ "$tunnel_needs_start" -eq 1 ]]; then
+  launchctl bootout "$user_domain" "$tunnel_target" 2>/dev/null || true
+  launchctl bootstrap "$user_domain" "$tunnel_target"
+  launchctl enable "$user_domain/com.sinergi.tunnel"
+  launchctl kickstart -k "$user_domain/com.sinergi.tunnel"
+fi
 
 if [[ "$mode" == "managed" ]]; then
   launchctl bootout "$user_domain" "$gateway_target" 2>/dev/null || true
@@ -88,7 +79,7 @@ APPLESCRIPT
 if [[ "$mode" == "interactive" ]]; then
   frontend_command="cd ${(q)frontend_dir}; echo 'Sinergi frontend'; npm run dev; echo; echo 'Frontend stopped. Press Ctrl-D to close.'; exec zsh"
   backend_command="cd ${(q)source_dir}; echo 'Sinergi FastAPI backend'; uv run --env-file .env fastapi dev app/main.py --host 127.0.0.1 --port 8001; echo; echo 'Backend stopped. Press Ctrl-D to close.'; exec zsh"
-  vllm_command="source ${(q)HOME}/.venv-vllm-metal/bin/activate; export VLLM_METAL_USE_PAGED_ATTENTION=1 VLLM_METAL_MEMORY_FRACTION=0.90 VLLM_MLX_DEVICE=gpu; echo 'Sinergi vLLM'; vllm serve Legal-verse/InaVerdict-gemma-v2 --served-model-name Legal-verse/InaVerdict-gemma-v2 --host 127.0.0.1 --port 8000 --max-model-len 128000 --max-num-seqs 1 --max-num-batched-tokens 512 --default-chat-template-kwargs '{\"enable_thinking\": true}' --reasoning-parser gemma4; echo; echo 'vLLM stopped. Press Ctrl-D to close.'; exec zsh"
+  vllm_command="source ${(q)HOME}/.venv-vllm-metal/bin/activate; export VLLM_METAL_USE_PAGED_ATTENTION=1 VLLM_METAL_MEMORY_FRACTION=0.90 VLLM_MLX_DEVICE=gpu; echo 'Sinergi vLLM'; vllm serve Legal-verse/InaVerdict-gemma-v2 --served-model-name Legal-verse/InaVerdict-gemma-v2 --host 127.0.0.1 --port 8000 --max-model-len 65536 --max-num-seqs 1 --max-num-batched-tokens 512 --default-chat-template-kwargs '{\"enable_thinking\": true}' --reasoning-parser gemma4; echo; echo 'vLLM stopped. Press Ctrl-D to close.'; exec zsh"
 
   open_terminal "Sinergi Frontend" "$frontend_command"
   open_terminal "Sinergi FastAPI" "$backend_command"

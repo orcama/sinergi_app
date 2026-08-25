@@ -12,6 +12,7 @@ from unittest import mock
 from app.main import (
     DEFAULT_MODEL,
     DEFAULT_SYSTEM_PROMPT,
+    INDONESIAN_REASONING_INSTRUCTION,
     MODEL_ID,
     WANDB_MODEL_ID,
     current_public_url,
@@ -20,7 +21,10 @@ from app.main import (
     load_providers,
     PROVIDER_BY_ID,
     app,
+    build_system_prompt,
 )
+from app.schemas import MAX_DATA_URL_LENGTH, RagIngestRequest
+from app.services import content_service
 
 VLLM_MODEL = PROVIDER_BY_ID["vllm"].model if "vllm" in PROVIDER_BY_ID else MODEL_ID
 
@@ -68,6 +72,19 @@ def make_test_pdf(text: str) -> str:
 
 def teardown_provider_env() -> None:
     os.environ.pop("MODEL_PROVIDERS", None)
+
+
+def test_default_prompt_requires_indonesian_reasoning() -> None:
+    assert INDONESIAN_REASONING_INSTRUCTION in DEFAULT_SYSTEM_PROMPT
+    assert "bahasa Indonesia" in DEFAULT_SYSTEM_PROMPT
+    assert "reasoning_content" in DEFAULT_SYSTEM_PROMPT
+
+
+def test_custom_prompt_keeps_indonesian_reasoning_instruction() -> None:
+    prompt = build_system_prompt("Jawab singkat dan gunakan struktur poin.")
+
+    assert prompt.startswith("Jawab singkat dan gunakan struktur poin.")
+    assert prompt.endswith(INDONESIAN_REASONING_INSTRUCTION)
 
 
 @pytest.mark.asyncio
@@ -345,6 +362,30 @@ def test_extract_pdf_text_handles_garbage() -> None:
     assert extract_pdf_text("data:application/pdf;base64,!!invalid!!") == ""
 
 
+def test_pdf_payload_limit_covers_a_ten_megabyte_file() -> None:
+    encoded_size = ((10 * 1024 * 1024 + 2) // 3) * 4 + len(
+        "data:application/pdf;base64,"
+    )
+
+    assert encoded_size < MAX_DATA_URL_LENGTH
+    assert RagIngestRequest(data="x" * MAX_DATA_URL_LENGTH).data
+
+
+def test_extract_pdf_text_uses_pdftotext_fallback(monkeypatch) -> None:
+    monkeypatch.setattr(
+        content_service,
+        "PdfReader",
+        mock.Mock(side_effect=ValueError("malformed PDF")),
+    )
+    monkeypatch.setattr(
+        content_service,
+        "_extract_with_pdftotext",
+        lambda raw: "Teks fallback dari pdftotext",
+    )
+
+    assert extract_pdf_text(make_test_pdf("ignored")) == "Teks fallback dari pdftotext"
+
+
 def test_current_public_url_returns_latest_tunnel_url(tmp_path) -> None:
     tunnel_log = tmp_path / "tunnel-error.log"
     tunnel_log.write_text(
@@ -357,6 +398,12 @@ def test_current_public_url_returns_latest_tunnel_url(tmp_path) -> None:
         current_public_url(tunnel_log)
         == "https://latest-example-name.trycloudflare.com"
     )
+
+
+def test_current_public_url_prefers_configured_public_url(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("PUBLIC_URL", "https://api.legal-verse.id/")
+
+    assert current_public_url() == "https://api.legal-verse.id"
 
 
 @pytest.mark.asyncio
@@ -570,3 +617,109 @@ async def test_rag_query_unknown_document_rejected() -> None:
 
     assert response.status_code == 404
     assert "Unknown RAG document" in response.json()["detail"]
+
+
+def _fake_chat_db(existing: dict | None = None):
+    snap = mock.Mock()
+    snap.id = "chat-1"
+    snap.exists = existing is not None
+    snap.to_dict.return_value = existing or {
+        "user_id": "uid-123",
+        "title": "Tanya Hukum",
+        "messages": [{"id": "m1", "role": "user", "content": "Halo"}],
+        "is_pinned": False,
+        "model": "sft",
+        "provider": "local",
+        "context_limit": 12000,
+        "project_id": "",
+        "created_at": "2024-01-01T00:00:00+00:00",
+        "updated_at": "2024-01-01T00:00:00+00:00",
+    }
+    ref = mock.Mock()
+    ref.get.return_value = snap
+    ref.set.return_value = None
+    ref.delete.return_value = None
+    collection = mock.Mock()
+    collection.document.return_value = ref
+    query = mock.Mock()
+    query.stream.return_value = [snap]
+    collection.where.return_value = query
+    fake_db = mock.Mock()
+    fake_db.collection.return_value = collection
+    return fake_db, ref, collection
+
+
+@pytest.mark.asyncio
+async def test_chat_session_save_creates_chat() -> None:
+    fake_user = {"uid": "uid-123", "email": "user@example.com"}
+    fake_db, ref, collection = _fake_chat_db()
+
+    with (
+        mock.patch("app.core.auth.firebase_auth.verify_id_token", return_value=fake_user),
+        mock.patch("app.controllers.chat_controller.db", fake_db),
+    ):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/chats",
+                headers={"Authorization": "Bearer fake-token"},
+                json={
+                    "title": "Tanya Hukum",
+                    "messages": [{"id": "m1", "role": "user", "content": "Halo"}],
+                    "model": "sft",
+                    "provider": "local",
+                    "context_limit": 12000,
+                },
+            )
+
+    assert response.status_code == 200
+    assert response.json()["title"] == "Tanya Hukum"
+    assert response.json()["messages"][0]["content"] == "Halo"
+    fake_db.collection.assert_called_once_with("chats")
+    ref.set.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_chat_session_list_returns_only_own_chats() -> None:
+    fake_user = {"uid": "uid-123", "email": "user@example.com"}
+    fake_db, _, collection = _fake_chat_db()
+
+    with (
+        mock.patch("app.core.auth.firebase_auth.verify_id_token", return_value=fake_user),
+        mock.patch("app.controllers.chat_controller.db", fake_db),
+    ):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                "/api/chats",
+                headers={"Authorization": "Bearer fake-token"},
+            )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["chats"][0]["id"] == "chat-1"
+    collection.where.assert_called_once_with("user_id", "==", "uid-123")
+
+
+@pytest.mark.asyncio
+async def test_chat_session_delete_removes_chat() -> None:
+    fake_user = {"uid": "uid-123", "email": "user@example.com"}
+    fake_db, ref, _ = _fake_chat_db({"user_id": "uid-123", "title": "Tanya Hukum"})
+
+    with (
+        mock.patch("app.core.auth.firebase_auth.verify_id_token", return_value=fake_user),
+        mock.patch("app.controllers.chat_controller.db", fake_db),
+    ):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.delete(
+                "/api/chats/chat-1",
+                headers={"Authorization": "Bearer fake-token"},
+            )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "id": "chat-1"}
+    ref.delete.assert_called_once()

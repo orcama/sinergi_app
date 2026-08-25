@@ -46,6 +46,7 @@ import {
   saveToLibrary,
   type RagHit,
 } from "@/lib/rag";
+import { BACKEND_URL } from "@/lib/backend-url";
 import { AuthGuard } from "@/lib/components/auth/AuthGuard";
 import { useAuth } from "@/lib/auth-context";
 
@@ -116,8 +117,7 @@ function trimConversationToLimit(
   return messages.slice(start);
 }
 
-const CHAT_API_URL =
-  process.env.NEXT_PUBLIC_CHAT_API_URL ?? "http://127.0.0.1:8001";
+const CHAT_API_URL = BACKEND_URL;
 
 function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -759,22 +759,7 @@ function ThinkingAnswer({
   thinkingSeconds?: number;
 }) {
   const hasThinking = !!thinking?.trim();
-  const [expanded, setExpanded] = useState(true);
-  const [wasStreaming, setWasStreaming] = useState(false);
-
-  // Saat streaming mulai memproduksi teks berpikir, pastikan section tampil.
-  // (Adjusting state during render — pola React untuk sinkronisasi tanpa effect.)
-  if (isStreaming && hasThinking && !expanded) {
-    setExpanded(true);
-  }
-  // Begitu streaming selesai, otomatis collapse untuk menghemat ruang.
-  if (!isStreaming && wasStreaming) {
-    setWasStreaming(false);
-    setExpanded(false);
-  }
-  if (isStreaming && !wasStreaming) {
-    setWasStreaming(true);
-  }
+  const [expanded, setExpanded] = useState(false);
 
   if (!hasThinking) return null;
 
@@ -815,6 +800,7 @@ function ThinkingAnswer({
         className={`grid transition-[grid-template-rows] duration-300 ease-out ${
           expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
         }`}
+        aria-hidden={!expanded}
       >
         <div className="overflow-hidden">
           <div className="border-t border-purple-200/60 px-4 py-3">
@@ -979,7 +965,7 @@ function AttachmentChip({
         canPreview
           ? "Klik untuk lihat teks hasil ekstraksi"
           : attachment.status === "error"
-            ? "Gagal mengekstrak teks"
+            ? attachment.error ?? "Gagal mengekstrak teks"
             : undefined
       }
       className={`flex items-center gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-2 transition-colors ${
@@ -1004,8 +990,8 @@ function AttachmentChip({
           </div>
         )}
         {attachment.status === "error" && (
-          <div className="text-xs font-medium text-red-500">
-            Gagal ekstrak teks
+          <div className="text-xs font-medium text-red-500" title={attachment.error}>
+            {attachment.error ?? "Gagal ekstrak teks"}
           </div>
         )}
         {canPreview && (
@@ -1462,6 +1448,18 @@ export default function ChatPage() {
   const setProviderContextLimits = useChatStore(
     (s) => s.setProviderContextLimits
   );
+  const loadSessions = useChatStore((s) => s.loadSessions);
+  const setSessions = useChatStore((s) => s.setSessions);
+  const { user, loading } = useAuth();
+
+  useEffect(() => {
+    if (loading) return;
+    if (user) {
+      loadSessions().catch(() => {});
+    } else {
+      setSessions([], null);
+    }
+  }, [user, loading, loadSessions, setSessions]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1685,6 +1683,13 @@ const incoming = Array.from(fileList);
     const pending: Attachment[] = [];
 
     for (const file of incoming) {
+      if (
+        file.type !== "application/pdf" &&
+        !file.name.toLowerCase().endsWith(".pdf")
+      ) {
+        showToast(`"${file.name}" bukan file PDF.`);
+        continue;
+      }
       if (attachments.length + pending.length >= MAX_ATTACHMENTS) {
         showToast(`Maksimal ${MAX_ATTACHMENTS} file per pesan.`);
         break;
@@ -1705,7 +1710,7 @@ const incoming = Array.from(fileList);
 if (pending.length === 0) return;
     setAttachments((prev) => [...prev, ...pending]);
 
-    // Ekstraksi teks asli lewat backend Python (PyMuPDF), bukan simulasi.
+    // Ekstraksi teks asli lewat backend Python, bukan simulasi.
     for (const attachment of pending) {
       extractPdfText(attachment.file!)
         .then(({ text, token_count }) => {
@@ -1743,11 +1748,15 @@ if (pending.length === 0) return;
             }
           );
         })
-        .catch(() => {
+        .catch((error: unknown) => {
+          const message =
+            error instanceof Error && error.message
+              ? error.message
+              : "Gagal mengekstrak teks dari PDF.";
           setAttachments((prev) =>
             prev.map((att) =>
               att.id === attachment.id
-                ? { ...att, status: "error" as const }
+                ? { ...att, status: "error" as const, error: message }
                 : att
             )
           );

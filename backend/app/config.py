@@ -13,20 +13,37 @@ from app.schemas import ProviderConfig
 
 DEFAULT_MODEL = os.getenv("MODEL_ID", "").strip()
 DEFAULT_WANDB_MODEL = os.getenv("WANDB_MODEL_ID", "").strip()
+INDONESIAN_REASONING_INSTRUCTION = (
+    "Lakukan seluruh proses berpikir dan penalaran dalam bahasa Indonesia, termasuk "
+    "reasoning_content jika dikeluarkan. Gunakan istilah hukum Indonesia yang tepat "
+    "dan jangan berpindah ke bahasa Inggris dalam penalaran kecuali istilah, nama, "
+    "atau kutipan asli memang harus dipertahankan."
+)
 DEFAULT_SYSTEM_PROMPT = (
     "Anda adalah LEGAL-VERSE AI, asisten analisis hukum Indonesia. "
     "Jawab dengan jelas dalam bahasa pengguna, nyatakan ketidakpastian, dan jangan "
     "mengarang nomor putusan, kutipan, sumber, atau fakta hukum. Ingatkan pengguna "
-    "bahwa jawaban bukan pengganti nasihat hukum profesional bila relevan."
+    "bahwa jawaban bukan pengganti nasihat hukum profesional bila relevan. "
+    + INDONESIAN_REASONING_INSTRUCTION
 )
 VLLM_BASE_URL = os.getenv("VLLM_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 MODEL_ID = os.getenv("MODEL_ID", DEFAULT_MODEL)
-SYSTEM_PROMPT = os.getenv("CHAT_SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT)
+_configured_system_prompt = os.getenv("CHAT_SYSTEM_PROMPT", "").strip()
+
+
+def build_system_prompt(configured_prompt: str = "") -> str:
+    prompt = configured_prompt.strip() or DEFAULT_SYSTEM_PROMPT
+    if INDONESIAN_REASONING_INSTRUCTION in prompt:
+        return prompt
+    return f"{prompt}\n\n{INDONESIAN_REASONING_INSTRUCTION}"
+
+
+SYSTEM_PROMPT = build_system_prompt(_configured_system_prompt)
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "300"))
 WANDB_BASE_URL = os.getenv("WANDB_BASE_URL", "https://api.inference.wandb.ai").rstrip("/")
 WANDB_MODEL_ID = os.getenv("WANDB_MODEL_ID", DEFAULT_WANDB_MODEL) or "MiniMaxAI/MiniMax-M3"
 DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "vllm")
-LOCAL_CONTEXT_WINDOW = int(os.getenv("VLLM_MAX_MODEL_LEN", "128000"))
+LOCAL_CONTEXT_WINDOW = int(os.getenv("VLLM_MAX_MODEL_LEN", "65536"))
 _vllm_model_cache: dict[str, float | str] = {}
 _VLLM_DISCOVERY_TTL = float(os.getenv("VLLM_DISCOVERY_TTL", "30"))
 
@@ -36,6 +53,11 @@ def env_list(name: str, default: str) -> list[str]:
 
 
 def current_public_url(log_path: Path | None = None) -> str:
+    if log_path is None:
+        configured_url = os.getenv("PUBLIC_URL", "").strip().rstrip("/")
+        if configured_url:
+            return configured_url
+
     configured_path = os.getenv("PUBLIC_TUNNEL_LOG", "").strip()
     path = log_path or (Path(os.path.expanduser(configured_path)) if configured_path else None)
     path = path or Path(__file__).resolve().parent.parent / "logs" / "tunnel-error.log"
