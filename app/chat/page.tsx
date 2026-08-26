@@ -1322,13 +1322,18 @@ function ChatInput({
 }
 
 function SourceCard({ source }: { source: Source }) {
+  const [isExpanded, setIsExpanded] = useState(false);
   return (
     <div className="rounded-2xl border border-zinc-200 bg-white p-4">
       <h4 className="text-sm font-bold leading-snug text-zinc-900">
         {source.title}
       </h4>
       {source.excerpt ? (
-        <p className="mt-3 line-clamp-5 text-xs leading-relaxed text-zinc-600">
+        <p
+          className={`mt-3 text-xs leading-relaxed text-zinc-600 ${
+            isExpanded ? "" : "line-clamp-5"
+          }`}
+        >
           {source.excerpt}
         </p>
       ) : (
@@ -1357,8 +1362,11 @@ function SourceCard({ source }: { source: Source }) {
           {source.reason ? ` · ${source.reason}` : ""}
         </span>
       )}
-      <button className="mt-4 w-full rounded-xl bg-[#6B1B7A] py-2.5 text-sm font-semibold text-white transition-transform hover:scale-[1.02]">
-        Ringkasan
+      <button
+        onClick={() => setIsExpanded((v) => !v)}
+        className="mt-4 w-full rounded-xl bg-[#6B1B7A] py-2.5 text-sm font-semibold text-white transition-transform hover:scale-[1.02]"
+      >
+        {isExpanded ? "Sembunyikan Ringkasan" : "Ringkasan"}
       </button>
     </div>
   );

@@ -23,6 +23,7 @@ import { apiClient } from "@/lib/api";
 export const FIREBASE_ERROR_MESSAGES: Record<string, string> = {
   "auth/user-not-found": "Email belum terdaftar",
   "auth/wrong-password": "Password salah",
+  "auth/invalid-credential": "Email atau password salah",
   "auth/email-already-in-use": "Email sudah digunakan",
   "auth/popup-closed-by-user": "Login Google dibatalkan",
   "auth/popup-blocked": "Popup Google diblokir browser",
