@@ -1448,6 +1448,18 @@ export default function ChatPage() {
   const setProviderContextLimits = useChatStore(
     (s) => s.setProviderContextLimits
   );
+  const loadSessions = useChatStore((s) => s.loadSessions);
+  const setSessions = useChatStore((s) => s.setSessions);
+  const { user, loading } = useAuth();
+
+  useEffect(() => {
+    if (loading) return;
+    if (user) {
+      loadSessions().catch(() => {});
+    } else {
+      setSessions([], null);
+    }
+  }, [user, loading, loadSessions, setSessions]);
 
   useEffect(() => {
     let cancelled = false;

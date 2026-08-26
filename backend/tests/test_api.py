@@ -617,3 +617,109 @@ async def test_rag_query_unknown_document_rejected() -> None:
 
     assert response.status_code == 404
     assert "Unknown RAG document" in response.json()["detail"]
+
+
+def _fake_chat_db(existing: dict | None = None):
+    snap = mock.Mock()
+    snap.id = "chat-1"
+    snap.exists = existing is not None
+    snap.to_dict.return_value = existing or {
+        "user_id": "uid-123",
+        "title": "Tanya Hukum",
+        "messages": [{"id": "m1", "role": "user", "content": "Halo"}],
+        "is_pinned": False,
+        "model": "sft",
+        "provider": "local",
+        "context_limit": 12000,
+        "project_id": "",
+        "created_at": "2024-01-01T00:00:00+00:00",
+        "updated_at": "2024-01-01T00:00:00+00:00",
+    }
+    ref = mock.Mock()
+    ref.get.return_value = snap
+    ref.set.return_value = None
+    ref.delete.return_value = None
+    collection = mock.Mock()
+    collection.document.return_value = ref
+    query = mock.Mock()
+    query.stream.return_value = [snap]
+    collection.where.return_value = query
+    fake_db = mock.Mock()
+    fake_db.collection.return_value = collection
+    return fake_db, ref, collection
+
+
+@pytest.mark.asyncio
+async def test_chat_session_save_creates_chat() -> None:
+    fake_user = {"uid": "uid-123", "email": "user@example.com"}
+    fake_db, ref, collection = _fake_chat_db()
+
+    with (
+        mock.patch("app.core.auth.firebase_auth.verify_id_token", return_value=fake_user),
+        mock.patch("app.controllers.chat_controller.db", fake_db),
+    ):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/chats",
+                headers={"Authorization": "Bearer fake-token"},
+                json={
+                    "title": "Tanya Hukum",
+                    "messages": [{"id": "m1", "role": "user", "content": "Halo"}],
+                    "model": "sft",
+                    "provider": "local",
+                    "context_limit": 12000,
+                },
+            )
+
+    assert response.status_code == 200
+    assert response.json()["title"] == "Tanya Hukum"
+    assert response.json()["messages"][0]["content"] == "Halo"
+    fake_db.collection.assert_called_once_with("chats")
+    ref.set.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_chat_session_list_returns_only_own_chats() -> None:
+    fake_user = {"uid": "uid-123", "email": "user@example.com"}
+    fake_db, _, collection = _fake_chat_db()
+
+    with (
+        mock.patch("app.core.auth.firebase_auth.verify_id_token", return_value=fake_user),
+        mock.patch("app.controllers.chat_controller.db", fake_db),
+    ):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                "/api/chats",
+                headers={"Authorization": "Bearer fake-token"},
+            )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["chats"][0]["id"] == "chat-1"
+    collection.where.assert_called_once_with("user_id", "==", "uid-123")
+
+
+@pytest.mark.asyncio
+async def test_chat_session_delete_removes_chat() -> None:
+    fake_user = {"uid": "uid-123", "email": "user@example.com"}
+    fake_db, ref, _ = _fake_chat_db({"user_id": "uid-123", "title": "Tanya Hukum"})
+
+    with (
+        mock.patch("app.core.auth.firebase_auth.verify_id_token", return_value=fake_user),
+        mock.patch("app.controllers.chat_controller.db", fake_db),
+    ):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.delete(
+                "/api/chats/chat-1",
+                headers={"Authorization": "Bearer fake-token"},
+            )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "id": "chat-1"}
+    ref.delete.assert_called_once()
