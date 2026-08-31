@@ -80,6 +80,7 @@ interface ChatState {
     message: ChatMessage,
     options?: { removeLoading?: boolean }
   ) => void;
+  removeSessionMessage: (sessionId: string, messageId: string) => void;
   setSessionTitle: (sessionId: string, title: string) => void;
 }
 
@@ -258,6 +259,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 ),
               }
             : { ...s, messages: [...messages, message] };
+        updated = next;
+        return next;
+      });
+      if (updated) persistSession(updated);
+      return { chatSessions };
+    }),
+
+  removeSessionMessage: (sessionId, messageId) =>
+    set((state) => {
+      let updated: ChatSession | null = null;
+      const chatSessions = state.chatSessions.map((s) => {
+        if (s.id !== sessionId) return s;
+        const next = {
+          ...s,
+          messages: s.messages.filter((m) => m.id !== messageId),
+        };
         updated = next;
         return next;
       });
