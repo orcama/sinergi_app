@@ -15,12 +15,12 @@ router = APIRouter()
 
 
 @router.post("/api/chat", response_model=ChatResponse)
-async def chat_route(body: ChatRequest, request: Request):
+async def chat_route(body: ChatRequest, request: Request, user: dict = Depends(require_verified_user)):
     return await chat(body, request)
 
 
 @router.post("/api/chat/stream")
-async def chat_stream_route(body: ChatRequest, request: Request):
+async def chat_stream_route(body: ChatRequest, request: Request, user: dict = Depends(require_verified_user)):
     return await chat_stream(body, request)
 
 

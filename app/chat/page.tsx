@@ -51,6 +51,7 @@ import {
 import { BACKEND_URL } from "@/lib/backend-url";
 import { AuthGuard } from "@/lib/components/auth/AuthGuard";
 import { useAuth } from "@/lib/auth-context";
+import { auth } from "@/lib/firebase";
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -120,6 +121,13 @@ function trimConversationToLimit(
 }
 
 const CHAT_API_URL = BACKEND_URL;
+
+async function authHeaders(): Promise<Record<string, string>> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const user = auth.currentUser;
+  if (user) headers.Authorization = `Bearer ${await user.getIdToken()}`;
+  return headers;
+}
 
 function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -203,7 +211,7 @@ async function streamChat(
 ): Promise<void> {
   const response = await fetch(`${CHAT_API_URL}/api/chat/stream`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: await authHeaders(),
     body: JSON.stringify(body),
   });
 
@@ -292,7 +300,7 @@ async function requestAIResponse(
   // Non-streaming fallback.
   const response = await fetch(`${CHAT_API_URL}/api/chat`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: await authHeaders(),
     body: JSON.stringify(body),
   });
 
