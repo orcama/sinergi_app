@@ -136,6 +136,7 @@ async def test_auth_sync_creates_user_profile() -> None:
     fake_user = {"uid": "uid-123", "email": "user@example.com", "name": "Alice"}
     fake_user_ref = mock.Mock()
     fake_user_ref.set.return_value = None
+    fake_user_ref.get.return_value = SimpleNamespace(exists=False, to_dict=lambda: {})
     fake_db = mock.Mock()
     fake_db.collection.return_value.document.return_value = fake_user_ref
 
@@ -649,6 +650,16 @@ def _fake_chat_db(existing: dict | None = None):
     return fake_db, ref, collection
 
 
+def _fake_verified_user_db() -> mock.Mock:
+    """DB stub untuk require_verified_user: doc user dengan verified=True."""
+    user_snap = SimpleNamespace(exists=True, to_dict=lambda: {"verified": True, "role": "user"})
+    user_ref = mock.Mock()
+    user_ref.get.return_value = user_snap
+    user_db = mock.Mock()
+    user_db.collection.return_value.document.return_value = user_ref
+    return user_db
+
+
 @pytest.mark.asyncio
 async def test_chat_session_save_creates_chat() -> None:
     fake_user = {"uid": "uid-123", "email": "user@example.com"}
@@ -657,6 +668,7 @@ async def test_chat_session_save_creates_chat() -> None:
     with (
         mock.patch("app.core.auth.firebase_auth.verify_id_token", return_value=fake_user),
         mock.patch("app.controllers.chat_controller.db", fake_db),
+        mock.patch("app.core.firebase.db", _fake_verified_user_db()),
     ):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -688,6 +700,7 @@ async def test_chat_session_list_returns_only_own_chats() -> None:
     with (
         mock.patch("app.core.auth.firebase_auth.verify_id_token", return_value=fake_user),
         mock.patch("app.controllers.chat_controller.db", fake_db),
+        mock.patch("app.core.firebase.db", _fake_verified_user_db()),
     ):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -711,6 +724,7 @@ async def test_chat_session_delete_removes_chat() -> None:
     with (
         mock.patch("app.core.auth.firebase_auth.verify_id_token", return_value=fake_user),
         mock.patch("app.controllers.chat_controller.db", fake_db),
+        mock.patch("app.core.firebase.db", _fake_verified_user_db()),
     ):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"

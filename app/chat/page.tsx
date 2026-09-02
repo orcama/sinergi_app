@@ -28,6 +28,7 @@ import {
   Cpu,
   Paperclip,
   RotateCw,
+  ShieldCheck,
 } from "lucide-react";
 import type {
   Attachment,
@@ -514,7 +515,7 @@ function Sidebar({
   onMobileClose: () => void;
 }) {
   const router = useRouter();
-  const { user, logout, loading } = useAuth();
+  const { user, logout, loading, isAdmin } = useAuth();
   const handleLogout = async () => {
     await logout();
     router.push("/");
@@ -594,6 +595,15 @@ function Sidebar({
           <FolderKanban className="h-5 w-5 shrink-0 text-pink-400" />
           {!isCollapsed && <span>Project</span>}
         </button>
+        {isAdmin && (
+          <button
+            onClick={() => router.push("/admin")}
+            className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition-colors hover:bg-white/10"
+          >
+            <ShieldCheck className="h-5 w-5 shrink-0 text-pink-400" />
+            {!isCollapsed && <span>Admin</span>}
+          </button>
+        )}
       </div>
 
       {!isCollapsed && (
