@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from app.config import MODEL_ID, VLLM_BASE_URL, current_public_url
 from app.middleware.cors import register_cors
 from app.routes.auth_routes import router as auth_router
+from app.routes.admin_routes import router as admin_router
 from app.routes.chat_routes import router as chat_router
 from app.routes.library_routes import router as library_router
 from app.routes.project_routes import router as project_router
@@ -36,6 +37,7 @@ app = FastAPI(title="Sinergi API", version="0.1.0", lifespan=lifespan)
 register_cors(app)
 app.include_router(system_router)
 app.include_router(auth_router)
+app.include_router(admin_router)
 app.include_router(chat_router)
 app.include_router(rag_router)
 app.include_router(library_router)

@@ -8,8 +8,11 @@ from pathlib import Path
 
 import httpx
 from pydantic import ValidationError
+from dotenv import load_dotenv
 
 from app.schemas import ProviderConfig
+
+load_dotenv()
 
 DEFAULT_MODEL = os.getenv("MODEL_ID", "").strip()
 DEFAULT_WANDB_MODEL = os.getenv("WANDB_MODEL_ID", "").strip()
@@ -50,6 +53,9 @@ _VLLM_DISCOVERY_TTL = float(os.getenv("VLLM_DISCOVERY_TTL", "30"))
 
 def env_list(name: str, default: str) -> list[str]:
     return [item.strip() for item in os.getenv(name, default).split(",") if item.strip()]
+
+
+ADMIN_UIDS: frozenset[str] = frozenset(env_list("ADMIN_UIDS", ""))
 
 
 def current_public_url(log_path: Path | None = None) -> str:

@@ -44,6 +44,7 @@ export interface ChatMessage {
   thinkingSeconds?: number; // estimasi durasi proses berpikir
   sources?: Source[]; // hanya ada jika AI mereferensikan putusan
   isLoading?: boolean;
+  isError?: boolean; // jawaban gagal/terputus, perlu di-retry
   attachments?: Attachment[];
 }
 

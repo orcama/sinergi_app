@@ -27,6 +27,8 @@ import {
   ChevronDown,
   Cpu,
   Paperclip,
+  RotateCw,
+  ShieldCheck,
 } from "lucide-react";
 import type {
   Attachment,
@@ -49,6 +51,7 @@ import {
 import { BACKEND_URL } from "@/lib/backend-url";
 import { AuthGuard } from "@/lib/components/auth/AuthGuard";
 import { useAuth } from "@/lib/auth-context";
+import { auth } from "@/lib/firebase";
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -118,6 +121,13 @@ function trimConversationToLimit(
 }
 
 const CHAT_API_URL = BACKEND_URL;
+
+async function authHeaders(): Promise<Record<string, string>> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const user = auth.currentUser;
+  if (user) headers.Authorization = `Bearer ${await user.getIdToken()}`;
+  return headers;
+}
 
 function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -201,7 +211,7 @@ async function streamChat(
 ): Promise<void> {
   const response = await fetch(`${CHAT_API_URL}/api/chat/stream`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: await authHeaders(),
     body: JSON.stringify(body),
   });
 
@@ -290,7 +300,7 @@ async function requestAIResponse(
   // Non-streaming fallback.
   const response = await fetch(`${CHAT_API_URL}/api/chat`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: await authHeaders(),
     body: JSON.stringify(body),
   });
 
@@ -513,7 +523,7 @@ function Sidebar({
   onMobileClose: () => void;
 }) {
   const router = useRouter();
-  const { user, logout, loading } = useAuth();
+  const { user, logout, loading, isAdmin } = useAuth();
   const handleLogout = async () => {
     await logout();
     router.push("/");
@@ -593,6 +603,15 @@ function Sidebar({
           <FolderKanban className="h-5 w-5 shrink-0 text-pink-400" />
           {!isCollapsed && <span>Project</span>}
         </button>
+        {isAdmin && (
+          <button
+            onClick={() => router.push("/admin")}
+            className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition-colors hover:bg-white/10"
+          >
+            <ShieldCheck className="h-5 w-5 shrink-0 text-pink-400" />
+            {!isCollapsed && <span>Admin</span>}
+          </button>
+        )}
       </div>
 
       {!isCollapsed && (
@@ -817,10 +836,19 @@ function ThinkingAnswer({
 function MessageBubble({
   message,
   onPreviewAttachment,
+  onRetry,
+  isLastAssistant,
 }: {
   message: ChatMessage;
   onPreviewAttachment?: (attachment: Attachment) => void;
+  onRetry?: (messageId: string) => void;
+  isLastAssistant?: boolean;
 }) {
+  const canRetry =
+    !!onRetry &&
+    !message.isLoading &&
+    (message.isError || !message.content?.trim() || isLastAssistant);
+
   if (message.role === "user") {
     return (
       <div className="flex justify-end">
@@ -902,7 +930,7 @@ function MessageBubble({
             <Sparkles className="h-4 w-4 text-pink-500" />
             <span className="text-xs font-bold text-purple-800">LEGAL-VERSE AI</span>
           </div>
-          {message.content?.trim() ? (
+{message.content?.trim() ? (
             <MarkdownContent content={message.content} />
           ) : (
             !message.isLoading && (
@@ -913,6 +941,18 @@ function MessageBubble({
           )}
         </div>
       </div>
+      {canRetry && (
+        <div className="flex justify-start">
+          <button
+            type="button"
+            onClick={() => onRetry?.(message.id)}
+            className="flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-600 shadow-sm transition-colors hover:border-pink-300 hover:text-pink-600"
+          >
+            <RotateCw className="h-3.5 w-3.5" />
+            Retry
+          </button>
+        </div>
+      )}
     </>
   );
 }
@@ -1322,13 +1362,18 @@ function ChatInput({
 }
 
 function SourceCard({ source }: { source: Source }) {
+  const [isExpanded, setIsExpanded] = useState(false);
   return (
     <div className="rounded-2xl border border-zinc-200 bg-white p-4">
       <h4 className="text-sm font-bold leading-snug text-zinc-900">
         {source.title}
       </h4>
       {source.excerpt ? (
-        <p className="mt-3 line-clamp-5 text-xs leading-relaxed text-zinc-600">
+        <p
+          className={`mt-3 text-xs leading-relaxed text-zinc-600 ${
+            isExpanded ? "" : "line-clamp-5"
+          }`}
+        >
           {source.excerpt}
         </p>
       ) : (
@@ -1357,8 +1402,11 @@ function SourceCard({ source }: { source: Source }) {
           {source.reason ? ` · ${source.reason}` : ""}
         </span>
       )}
-      <button className="mt-4 w-full rounded-xl bg-[#6B1B7A] py-2.5 text-sm font-semibold text-white transition-transform hover:scale-[1.02]">
-        Ringkasan
+      <button
+        onClick={() => setIsExpanded((v) => !v)}
+        className="mt-4 w-full rounded-xl bg-[#6B1B7A] py-2.5 text-sm font-semibold text-white transition-transform hover:scale-[1.02]"
+      >
+        {isExpanded ? "Sembunyikan Ringkasan" : "Ringkasan"}
       </button>
     </div>
   );
@@ -1445,6 +1493,7 @@ export default function ChatPage() {
   const setSessionProvider = useChatStore((s) => s.setSessionProvider);
   const appendUserMessage = useChatStore((s) => s.appendUserMessage);
   const upsertSessionMessage = useChatStore((s) => s.upsertSessionMessage);
+  const removeSessionMessage = useChatStore((s) => s.removeSessionMessage);
   const setProviderContextLimits = useChatStore(
     (s) => s.setProviderContextLimits
   );
@@ -1501,28 +1550,21 @@ export default function ChatPage() {
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [activeMessages.length, isLoading]);
 
-  const handleSend = useCallback(
-    async (text: string) => {
-      const trimmed = text.trim();
-      if (!trimmed || isLoading) return;
-
-      const userMessage: ChatMessage = {
-        id: uid("user"),
-        role: "user",
-        content: trimmed,
-        ...(attachments.length > 0 ? { attachments } : {}),
-      };
-
-      const sessionId = appendUserMessage(activeSessionId, userMessage);
-
-      if (!activeSessionId && sessionId) {
-        setSessionModel(sessionId, draftModel);
-        setSessionProvider(sessionId, draftProvider);
-      }
-
-      setInput("");
-      setAttachments([]);
-      setIsLoading(true);
+  const streamAssistantResponse = useCallback(
+    async (params: {
+      sessionId: string;
+      conversation: Pick<ChatMessage, "role" | "content">[];
+      conversationAttachments: Attachment[];
+      sendModel: "sft" | "rag";
+      sendProvider: "local" | "deployed";
+    }) => {
+      const {
+        sessionId,
+        conversation,
+        conversationAttachments,
+        sendModel,
+        sendProvider,
+      } = params;
 
       const assistantId = uid("ai");
       const loadingMsg: ChatMessage = {
@@ -1532,30 +1574,12 @@ export default function ChatPage() {
         thinking: "",
         isLoading: true,
       };
-
-      if (sessionId) {
-        upsertSessionMessage(sessionId, loadingMsg);
-      }
-
-      const sendModel = activeSession?.model ?? draftModel;
-      const sendProvider = activeSession?.provider ?? draftProvider;
-
-      const historyLimit =
-        activeSession?.contextLimit ??
-        (sendProvider === "deployed" ? 262_000 : 128_000);
-      const trimmedHistory = trimConversationToLimit(
-        activeSession?.messages ?? [],
-        historyLimit
-      );
-      const conversation = [...trimmedHistory, userMessage].map(
-        ({ role, content }) => ({ role, content })
-      );
-      const conversationAttachments = collectConversationAttachments(
-        activeSession?.messages ?? [],
-        attachments
-      );
+      upsertSessionMessage(sessionId, loadingMsg);
 
       // State akumulasi streaming + waktu berpikir.
+
+
+
       let streamThinking = "";
       let streamAnswer = "";
       let thinkingStartedAt: number | null = null;
@@ -1594,8 +1618,9 @@ export default function ChatPage() {
         };
 
         if (sendModel === "rag" && conversationAttachments.length > 0) {
+          const question = conversation[conversation.length - 1]?.content ?? "";
           const { message: aiResponse, sources } = await requestRagResponse(
-            trimmed,
+            question,
             conversationAttachments,
             conversation,
             sendProvider,
@@ -1634,15 +1659,74 @@ export default function ChatPage() {
         }
       } catch (error) {
         const detail = error instanceof Error ? error.message : "Unknown error";
+        const hasPartial =
+          streamAnswer.trim().length > 0 || streamThinking.trim().length > 0;
         const errorResponse: ChatMessage = {
-          id: uid("ai-error"),
+          id: assistantId,
           role: "assistant",
-          content: `Tidak dapat menghubungi model: ${detail}`,
+          content: hasPartial
+            ? `${streamAnswer.trim()}\n\n> **Jawaban terputus. Model tidak merespon dengan lengkap. Klik tombol Retry untuk mencoba lagi.**`
+            : `Tidak dapat menghubungi model: ${detail}`,
+          thinking: streamThinking.trim() || undefined,
+          thinkingSeconds,
+          isError: true,
         };
         upsertSessionMessage(sessionId, errorResponse, { removeLoading: true });
       } finally {
         setIsLoading(false);
       }
+    },
+    [upsertSessionMessage, setIsLoading]
+  );
+
+  const handleSend = useCallback(
+    async (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed || isLoading) return;
+
+      const userMessage: ChatMessage = {
+        id: uid("user"),
+        role: "user",
+        content: trimmed,
+        ...(attachments.length > 0 ? { attachments } : {}),
+      };
+
+      const sessionId = appendUserMessage(activeSessionId, userMessage);
+
+      if (!activeSessionId && sessionId) {
+        setSessionModel(sessionId, draftModel);
+        setSessionProvider(sessionId, draftProvider);
+      }
+
+      setInput("");
+      setAttachments([]);
+      setIsLoading(true);
+
+      const sendModel = activeSession?.model ?? draftModel;
+      const sendProvider = activeSession?.provider ?? draftProvider;
+
+      const historyLimit =
+        activeSession?.contextLimit ??
+        (sendProvider === "deployed" ? 262_000 :128_000);
+      const trimmedHistory = trimConversationToLimit(
+        activeSession?.messages ?? [],
+        historyLimit
+      );
+      const conversation = [...trimmedHistory, userMessage].map(
+        ({ role, content }) => ({ role, content })
+      );
+      const conversationAttachments = collectConversationAttachments(
+        activeSession?.messages ?? [],
+        attachments
+      );
+
+      await streamAssistantResponse({
+        sessionId,
+        conversation,
+        conversationAttachments,
+        sendModel,
+        sendProvider,
+      });
     },
     [
       activeSession,
@@ -1650,15 +1734,65 @@ export default function ChatPage() {
       isLoading,
       attachments,
       appendUserMessage,
-      upsertSessionMessage,
       setIsLoading,
       draftModel,
       draftProvider,
       setSessionModel,
       setSessionProvider,
+      streamAssistantResponse,
     ]
   );
 
+  const handleRetry = useCallback(
+    async (targetId: string) => {
+      if (isLoading) return;
+      const session = useChatStore.getState().activeSession();
+      if (!session) return;
+      const sessionId = session.id;
+      const messages = session.messages;
+      const targetIndex = messages.findIndex((m) => m.id === targetId);
+      if (targetIndex === -1) return;
+
+      let userIndex = -1;
+      for (let i = targetIndex - 1; i >=  ​0; i--) {
+        if (messages[i].role === "user") { userIndex = i; break; }
+      }
+      if (userIndex === -1) return;
+// Hapus jawaban yang gagal/terputus sebelum mencoba ulang.
+
+
+
+      removeSessionMessage(sessionId, targetId);
+
+      const baseMessages = messages.slice(0, userIndex + 1);
+      const sendModel = session.model ?? "sft";
+      const sendProvider = session.provider ?? "local";
+      const historyLimit =
+        session.contextLimit ??
+        (sendProvider === "deployed" ? 262_000 :128_000);
+      const trimmedHistory = trimConversationToLimit(
+        baseMessages,
+        historyLimit
+      );
+      const conversation = [...trimmedHistory].map(
+        ({ role, content }) => ({ role, content })
+      );
+      const conversationAttachments = collectConversationAttachments(
+        baseMessages,
+        []
+      );
+
+      setIsLoading(true);
+      await streamAssistantResponse({
+        sessionId,
+        conversation,
+        conversationAttachments,
+        sendModel,
+        sendProvider,
+      });
+    },
+    [isLoading, removeSessionMessage, streamAssistantResponse, setIsLoading]
+  );
   const handlePickTemplate = (text: string) => {
     setInput(text);
     handleSend(text);
@@ -1905,11 +2039,15 @@ if (pending.length === 0) return;
             </div>
           ) : (
             <div className="mx-auto flex max-w-3xl flex-col gap-4">
-              {activeMessages.map((message) => (
+              {activeMessages.map((message, i) => (
                 <MessageBubble
                   key={message.id}
                   message={message}
                   onPreviewAttachment={setPreviewAttachment}
+                  onRetry={handleRetry}
+                  isLastAssistant={
+                    message.role === "assistant" && i === activeMessages.length - 1
+                  }
                 />
               ))}
             </div>

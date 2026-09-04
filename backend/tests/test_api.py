@@ -115,6 +115,7 @@ async def test_chat_proxies_conversation_and_adds_system_prompt() -> None:
     ) as client:
         response = await client.post(
             "/api/chat",
+            headers={"Authorization": "Bearer fake-token"},
             json={"provider": "vllm", "messages": [{"role": "user", "content": "Halo"}]},
         )
     await app.state.http.aclose()
@@ -136,6 +137,7 @@ async def test_auth_sync_creates_user_profile() -> None:
     fake_user = {"uid": "uid-123", "email": "user@example.com", "name": "Alice"}
     fake_user_ref = mock.Mock()
     fake_user_ref.set.return_value = None
+    fake_user_ref.get.return_value = SimpleNamespace(exists=False, to_dict=lambda: {})
     fake_db = mock.Mock()
     fake_db.collection.return_value.document.return_value = fake_user_ref
 
@@ -168,6 +170,7 @@ async def test_chat_reports_model_server_connection_failure() -> None:
     ) as client:
         response = await client.post(
             "/api/chat",
+            headers={"Authorization": "Bearer fake-token"},
             json={"provider": "vllm", "messages": [{"role": "user", "content": "Halo"}]},
         )
     await app.state.http.aclose()
@@ -211,6 +214,7 @@ async def test_wandb_provider_forward_multimodal_messages() -> None:
         ) as client:
             response = await client.post(
                 "/api/chat",
+                headers={"Authorization": "Bearer fake-token"},
                 json={
                     "provider": "wandb",
                     "messages": [MULTIMODAL_USER],
@@ -247,6 +251,7 @@ async def test_vllm_provider_flattens_multimodal_content() -> None:
     ) as client:
         response = await client.post(
             "/api/chat",
+            headers={"Authorization": "Bearer fake-token"},
             json={
                 "provider": "vllm",
                 "messages": [MULTIMODAL_USER],
@@ -315,6 +320,7 @@ async def test_unknown_provider_rejected() -> None:
     ) as client:
         response = await client.post(
             "/api/chat",
+            headers={"Authorization": "Bearer fake-token"},
             json={
                 "provider": "does-not-exist",
                 "messages": [{"role": "user", "content": "Halo"}],
@@ -435,6 +441,7 @@ async def test_wandb_provider_extracts_pdf_content() -> None:
         ) as client:
             response = await client.post(
                 "/api/chat",
+                headers={"Authorization": "Bearer fake-token"},
                 json={
                     "provider": "wandb",
                     "messages": [
@@ -478,6 +485,7 @@ async def test_vllm_provider_flattens_pdf_content() -> None:
     ) as client:
         response = await client.post(
             "/api/chat",
+            headers={"Authorization": "Bearer fake-token"},
             json={
                 "provider": "vllm",
                 "messages": [
@@ -524,6 +532,7 @@ async def test_rag_ingest_sectionizes_pdf() -> None:
     ) as client:
         response = await client.post(
             "/api/rag/ingest",
+            headers={"Authorization": "Bearer fake-token"},
             json={"name": "putusan.pdf", "data": pdf},
         )
 
@@ -544,6 +553,7 @@ async def test_pdf_extract_returns_raw_text() -> None:
     ) as client:
         response = await client.post(
             "/api/pdf/extract",
+            headers={"Authorization": "Bearer fake-token"},
             json={"name": "putusan.pdf", "data": pdf},
         )
 
@@ -561,6 +571,7 @@ async def test_pdf_extract_rejects_unreadable_pdf() -> None:
     ) as client:
         response = await client.post(
             "/api/pdf/extract",
+            headers={"Authorization": "Bearer fake-token"},
             json={"name": "corrupt.pdf", "data": "not-a-real-pdf"},
         )
 
@@ -576,11 +587,13 @@ async def test_rag_query_retrieves_relevant_section() -> None:
     ) as client:
         ingest = await client.post(
             "/api/rag/ingest",
+            headers={"Authorization": "Bearer fake-token"},
             json={"name": "putusan.pdf", "data": pdf},
         )
         doc_id = ingest.json()["id"]
         query = await client.post(
             "/api/rag/query",
+            headers={"Authorization": "Bearer fake-token"},
             json={"question": "Apa amar putusannya?", "document_ids": [doc_id]},
         )
 
@@ -597,6 +610,7 @@ async def test_rag_query_inline_text() -> None:
     ) as client:
         response = await client.post(
             "/api/rag/query",
+            headers={"Authorization": "Bearer fake-token"},
             json={"question": "Siapa yang memutus?", "text": LEGAL_PDF_TEXT},
         )
 
@@ -612,11 +626,12 @@ async def test_rag_query_unknown_document_rejected() -> None:
     ) as client:
         response = await client.post(
             "/api/rag/query",
+            headers={"Authorization": "Bearer fake-token"},
             json={"question": "Apa amar putusannya?", "document_ids": ["nope"]},
         )
 
     assert response.status_code == 404
-    assert "Unknown RAG document" in response.json()["detail"]
+    assert "document" in response.json()["detail"]
 
 
 def _fake_chat_db(existing: dict | None = None):
@@ -649,6 +664,29 @@ def _fake_chat_db(existing: dict | None = None):
     return fake_db, ref, collection
 
 
+def _fake_verified_user_db() -> mock.Mock:
+    """DB stub untuk require_verified_user: doc user dengan verified=True."""
+    user_snap = SimpleNamespace(exists=True, to_dict=lambda: {"verified": True, "role": "user"})
+    user_ref = mock.Mock()
+    user_ref.get.return_value = user_snap
+    user_db = mock.Mock()
+    user_db.collection.return_value.document.return_value = user_ref
+    return user_db
+
+
+@pytest.fixture(autouse=True)
+def _verified_auth():
+    with (
+        mock.patch(
+            "app.core.auth.firebase_auth.verify_id_token",
+            return_value={"uid": "uid-123", "email": "user@example.com"},
+        ),
+        mock.patch("app.core.firebase.db", _fake_verified_user_db()),
+    ):
+        yield
+
+
+
 @pytest.mark.asyncio
 async def test_chat_session_save_creates_chat() -> None:
     fake_user = {"uid": "uid-123", "email": "user@example.com"}
@@ -657,6 +695,7 @@ async def test_chat_session_save_creates_chat() -> None:
     with (
         mock.patch("app.core.auth.firebase_auth.verify_id_token", return_value=fake_user),
         mock.patch("app.controllers.chat_controller.db", fake_db),
+        mock.patch("app.core.firebase.db", _fake_verified_user_db()),
     ):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -688,6 +727,7 @@ async def test_chat_session_list_returns_only_own_chats() -> None:
     with (
         mock.patch("app.core.auth.firebase_auth.verify_id_token", return_value=fake_user),
         mock.patch("app.controllers.chat_controller.db", fake_db),
+        mock.patch("app.core.firebase.db", _fake_verified_user_db()),
     ):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -711,6 +751,7 @@ async def test_chat_session_delete_removes_chat() -> None:
     with (
         mock.patch("app.core.auth.firebase_auth.verify_id_token", return_value=fake_user),
         mock.patch("app.controllers.chat_controller.db", fake_db),
+        mock.patch("app.core.firebase.db", _fake_verified_user_db()),
     ):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"

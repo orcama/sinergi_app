@@ -35,9 +35,12 @@ function toDataUrl(file: File): Promise<string> {
 
 export async function ingestPdf(file: File): Promise<RagDoc> {
   const data = await toDataUrl(file);
+  const user = auth.currentUser;
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (user) headers.Authorization = `Bearer ${await user.getIdToken()}`;
   const response = await fetch(`${RAG_API_URL}/api/rag/ingest`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({ name: file.name, data }),
   });
   const payload = (await response.json().catch(() => null)) as
@@ -63,9 +66,12 @@ export interface ExtractedPdfText {
 /** Extract the raw PDF text server-side (PyMuPDF) and return it. */
 export async function extractPdfText(file: File): Promise<ExtractedPdfText> {
   const data = await toDataUrl(file);
+  const user = auth.currentUser;
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (user) headers.Authorization = `Bearer ${await user.getIdToken()}`;
   const response = await fetch(`${RAG_API_URL}/api/pdf/extract`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({ name: file.name, data }),
   });
   const payload = (await response.json().catch(() => null)) as

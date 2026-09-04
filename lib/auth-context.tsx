@@ -18,11 +18,12 @@ import {
   type User,
 } from "firebase/auth";
 import { auth, googleProvider } from "@/lib/firebase";
-import { apiClient } from "@/lib/api";
+import { apiClient, setVerificationRejectedHandler } from "@/lib/api";
 
 export const FIREBASE_ERROR_MESSAGES: Record<string, string> = {
   "auth/user-not-found": "Email belum terdaftar",
   "auth/wrong-password": "Password salah",
+  "auth/invalid-credential": "Email atau password salah",
   "auth/email-already-in-use": "Email sudah digunakan",
   "auth/popup-closed-by-user": "Login Google dibatalkan",
   "auth/popup-blocked": "Popup Google diblokir browser",
@@ -58,6 +59,10 @@ async function syncUser(user: User): Promise<void> {
 interface AuthContextValue {
   user: User | null;
   loading: boolean;
+  verified: boolean | null; // null = status belum dimuat
+  isAdmin: boolean;
+  verificationLoaded: boolean;
+  refreshVerificationStatus: () => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   loginGoogle: () => Promise<void>;
   register: (name: string, email: string, password: string) => Promise<void>;
@@ -70,14 +75,51 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [verification, setVerification] = useState<{
+    verified: boolean;
+    isAdmin: boolean;
+  } | null>(null);
+
+  const fetchVerification = useCallback(async () => {
+    const current = auth.currentUser;
+    if (!current) {
+      setVerification(null);
+      return;
+    }
+    try {
+      const res = await apiClient.get<{ verified?: boolean; role?: string }>("/auth/me");
+      setVerification({
+        verified: res.data.verified === true,
+        isAdmin: res.data.role === "admin",
+      });
+    } catch (err) {
+      console.error("fetchVerification failed:", err);
+      setVerification(null);
+    }
+  }, []);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser);
       setLoading(false);
+      if (firebaseUser) {
+        fetchVerification();
+      } else {
+        setVerification(null);
+      }
     });
     return unsubscribe;
-  }, []);
+  }, [fetchVerification]);
+
+  useEffect(() => {
+    // API 403 "belum diverifikasi" (mis. status dicabut admin di tengah
+    // sesi) → muat ulang status supaya UI pindah ke layar verifikasi.
+
+    setVerificationRejectedHandler(() => {
+      void fetchVerification();
+    });
+    return () => setVerificationRejectedHandler(null);
+  }, [fetchVerification]);
 
   const login = useCallback(async (email: string, password: string) => {
     const cred = await signInWithEmailAndPassword(auth, email, password);
@@ -115,7 +157,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, loading, login, loginGoogle, register, logout, getIdToken }}
+      value={{
+        user,
+        loading,
+        verified: verification?.verified ?? null,
+        isAdmin: verification?.isAdmin ?? false,
+        verificationLoaded: verification !== null,
+        refreshVerificationStatus: fetchVerification,
+        login,
+        loginGoogle,
+        register,
+        logout,
+        getIdToken,
+      }}
     >
       {children}
     </AuthContext.Provider>
