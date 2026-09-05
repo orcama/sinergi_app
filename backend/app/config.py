@@ -47,6 +47,18 @@ WANDB_BASE_URL = os.getenv("WANDB_BASE_URL", "https://api.inference.wandb.ai").r
 WANDB_MODEL_ID = os.getenv("WANDB_MODEL_ID", DEFAULT_WANDB_MODEL) or "MiniMaxAI/MiniMax-M3"
 DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "vllm")
 LOCAL_CONTEXT_WINDOW = int(os.getenv("VLLM_MAX_MODEL_LEN", "65536"))
+GRADIO_SPACE = os.getenv("GRADIO_SPACE", "galihww/inaverdict-gemma-v2-demo").rstrip("/")
+GRADIO_MODEL_ID = (os.getenv("GRADIO_MODEL_ID", "").strip() or "Legal-verse/InaVerdict-gemma-v2")
+GRADIO_CONTEXT_WINDOW = int(os.getenv("GRADIO_CONTEXT_WINDOW", "65536"))
+GRADIO_MAX_CHARS = int(os.getenv("GRADIO_MAX_CHARS", "12000"))
+GRADIO_MAX_NEW_TOKENS = int(os.getenv("GRADIO_MAX_NEW_TOKENS", "512"))
+GRADIO_TEMPERATURE = float(os.getenv("GRADIO_TEMPERATURE", "0.2"))
+GRADIO_SYSTEM_PROMPT = (
+    os.getenv(
+        "GRADIO_SYSTEM_PROMPT",
+        "Anda adalah asisten riset hukum Indonesia yang teliti. Bedakan fakta, asumsi, isu hukum, dan kesimpulan. Sebutkan yurisdiksi dan periode hukum yang relevan, jangan mengarang kutipan atau dasar hukum, dan sarankan verifikasi terhadap sumber primer. Jangan menyajikan jawaban sebagai pengganti nasihat dari advokat yang berkualifikasi.",
+    ).strip()
+)
 _vllm_model_cache: dict[str, float | str] = {}
 _VLLM_DISCOVERY_TTL = float(os.getenv("VLLM_DISCOVERY_TTL", "30"))
 
@@ -138,6 +150,7 @@ def _default_providers() -> list[ProviderConfig]:
     return [
         ProviderConfig(id="vllm", name="vLLM (Local)", model=discover_vllm_model(), base_url=VLLM_BASE_URL, kind="vllm", context_window=LOCAL_CONTEXT_WINDOW),
         ProviderConfig(id="wandb", name="WandB (MiniMax M3)", model=WANDB_MODEL_ID, base_url=WANDB_BASE_URL, kind="wandb", supports_images=True, api_key_env="WANDB_API_KEY", context_window=context_window_from_models_md()),
+        ProviderConfig(id="gradio", name="Public (Gemma 4 E2B)", model=GRADIO_MODEL_ID, base_url=GRADIO_SPACE, kind="gradio", context_window=GRADIO_CONTEXT_WINDOW),
     ]
 
 

@@ -12,7 +12,7 @@ class ProviderConfig(BaseModel):
     name: str
     model: str
     base_url: str
-    kind: Literal["vllm", "wandb"]
+    kind: Literal["vllm", "wandb", "gradio"]
     supports_images: bool = False
     api_key_env: str | None = None
     context_window: int = 128_000

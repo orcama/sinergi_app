@@ -55,7 +55,7 @@ export interface ChatSession {
   createdAt: string;
   isPinned?: boolean;
   model?: "sft" | "rag"; // mode model: fine-tuned vs retrieval
-  provider?: "local" | "deployed"; // local vLLM vs deployed (MiniMax M3)
+  provider?: "local" | "deployed" | "public"; // local vLLM vs deployed (MiniMax M3) vs public (Gemma 4 E2B)
   contextLimit: number; // token limit sesuai model
   projectId?: string;
   files?: { name: string; url: string }[]; // untuk fitur "View files in chat"

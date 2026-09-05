@@ -10,6 +10,7 @@ dependencies = [
   "pypdf>=6.16.1",
   "python-dotenv>=1.2.3",
   "fastembed>=0.7,<1",
+  "gradio-client>=2.6.1",
 ]
 
 [dependency-groups]
