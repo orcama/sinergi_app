@@ -357,6 +357,42 @@ def test_load_providers_from_env_json() -> None:
     assert providers[0].supports_images is True
 
 
+def test_gradio_payload_builds_history_and_clamps_params() -> None:
+    from app.config import GRADIO_MAX_NEW_TOKENS, GRADIO_SYSTEM_PROMPT, GRADIO_TEMPERATURE
+    from app.controllers.chat_controller import _gradio_payload
+    from app.schemas import ChatRequest, Message
+
+    body = ChatRequest(
+        messages=[
+            Message(role="user", content="halo"),
+            Message(role="assistant", content="hai"),
+            Message(role="user", content="lagi"),
+        ],
+        max_tokens=4096,
+        temperature=2.0,
+    )
+    payload = _gradio_payload(body)
+
+    assert payload["message"] == {
+        "text": "User: halo\n\nAsisten: hai\n\nUser: lagi",
+        "files": [],
+    }
+    assert "history" not in payload
+    assert payload["max_new_tokens"] == GRADIO_MAX_NEW_TOKENS
+    assert payload["temperature"] == GRADIO_TEMPERATURE
+    assert payload["system_prompt"] == GRADIO_SYSTEM_PROMPT
+    assert payload["enable_thinking"] is False
+
+
+def test_public_provider_defaults() -> None:
+    from app.config import PROVIDER_BY_ID, GRADIO_CONTEXT_WINDOW, GRADIO_SPACE
+
+    provider = PROVIDER_BY_ID["gradio"]
+    assert provider.kind == "gradio"
+    assert provider.base_url.rstrip("/") == GRADIO_SPACE
+    assert provider.context_window == GRADIO_CONTEXT_WINDOW
+
+
 def test_extract_pdf_text_from_data_url() -> None:
     data_url = make_test_pdf("Putusan Nomor 123 TPPO")
     text = extract_pdf_text(data_url)

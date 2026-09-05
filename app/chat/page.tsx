@@ -149,10 +149,10 @@ type ChatPayloadMessage = {
 
 async function buildChatBody(
   messages: Pick<ChatMessage, "role" | "content">[],
-  provider: "vllm" | "wandb",
+  provider: "vllm" | "wandb" | "gradio",
   context?: string,
   attachments?: Attachment[]
-): Promise<{ provider: "vllm" | "wandb"; messages: ChatPayloadMessage[] }> {
+): Promise<{ provider: "vllm" | "wandb" | "gradio"; messages: ChatPayloadMessage[] }> {
   let lastUserIndex = -1;
   messages.forEach((m, i) => {
     if (m.role === "user") lastUserIndex = i;
@@ -257,6 +257,8 @@ async function streamChat(
         handlers.onThinking?.(event.content);
       } else if (event.type === "answer" && event.content) {
         handlers.onAnswer?.(event.content);
+      } else if (event.type === "error" && event.content) {
+        throw new Error(event.content);
       }
     }
   }
@@ -264,7 +266,7 @@ async function streamChat(
 
 async function requestAIResponse(
   messages: Pick<ChatMessage, "role" | "content">[],
-  provider: "vllm" | "wandb",
+  provider: "vllm" | "wandb" | "gradio",
   context?: string,
   attachments?: Attachment[],
   handlers?: StreamHandlers
@@ -342,7 +344,7 @@ async function requestRagResponse(
   question: string,
   attachments: Attachment[],
   conversation: Pick<ChatMessage, "role" | "content">[],
-  provider: "local" | "deployed",
+  provider: "local" | "deployed" | "public",
   handlers?: StreamHandlers
 ): Promise<{ message: ChatMessage; sources: Source[] }> {
   const docIds: string[] = [];
@@ -385,7 +387,7 @@ async function requestRagResponse(
 
   const message = await requestAIResponse(
     conversation,
-    provider === "deployed" ? "wandb" : "vllm",
+    provider === "deployed" ? "wandb" : provider === "public" ? "gradio" : "vllm",
     context ||
       (fallbackText
         ? `[Teks dokumen]\n${fallbackText}`
@@ -1078,12 +1080,13 @@ function ModelSwitch({
   value,
   onChange,
 }: {
-  value: "local" | "deployed";
-  onChange: (m: "local" | "deployed") => void;
+  value: "local" | "deployed" | "public";
+  onChange: (m: "local" | "deployed" | "public") => void;
 }) {
-  const options: { key: "local" | "deployed"; label: string }[] = [
+  const options: { key: "local" | "deployed" | "public"; label: string }[] = [
     { key: "local", label: "Local" },
     { key: "deployed", label: "Deployed" },
+    { key: "public", label: "Public" },
   ];
   const containerRef = useRef<HTMLDivElement>(null);
   const [indicator, setIndicator] = useState({ width: 0, offset: 0 });
@@ -1464,7 +1467,7 @@ export default function ChatPage() {
   const [isSourcesSidebarOpen, setIsSourcesSidebarOpen] = useState(true);
   const [input, setInput] = useState("");
   const [draftModel, setDraftModel] = useState<"sft" | "rag">("sft");
-  const [draftProvider, setDraftProvider] = useState<"local" | "deployed">(
+  const [draftProvider, setDraftProvider] = useState<"local" | "deployed" | "public">(
     "local"
   );
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -1518,9 +1521,9 @@ export default function ChatPage() {
         if (!res.ok) return;
         const data = await res.json();
         if (cancelled || !Array.isArray(data.providers)) return;
-        const limits: Partial<Record<"local" | "deployed", number>> = {};
+        const limits: Partial<Record<"local" | "deployed" | "public", number>> = {};
         for (const p of data.providers) {
-          const key = p.id === "vllm" ? "local" : p.id === "wandb" ? "deployed" : null;
+          const key = p.id === "vllm" ? "local" : p.id === "wandb" ? "deployed" : p.id === "gradio" ? "public" : null;
           if (key && typeof p.context_window === "number") {
             limits[key] = p.context_window;
           }
@@ -1556,7 +1559,7 @@ export default function ChatPage() {
       conversation: Pick<ChatMessage, "role" | "content">[];
       conversationAttachments: Attachment[];
       sendModel: "sft" | "rag";
-      sendProvider: "local" | "deployed";
+      sendProvider: "local" | "deployed" | "public";
     }) => {
       const {
         sessionId,
@@ -1638,7 +1641,7 @@ export default function ChatPage() {
             { removeLoading: true }
           );
         } else {
-          const provider = sendProvider === "deployed" ? "wandb" : "vllm";
+          const provider = sendProvider === "deployed" ? "wandb" : sendProvider === "public" ? "gradio" : "vllm";
           const aiResponse = await requestAIResponse(
             conversation,
             provider,
@@ -1707,7 +1710,7 @@ export default function ChatPage() {
 
       const historyLimit =
         activeSession?.contextLimit ??
-        (sendProvider === "deployed" ? 262_000 :128_000);
+        (sendProvider === "deployed" ? 262_000 : sendProvider === "public" ? 65_536 :  128_000);
       const trimmedHistory = trimConversationToLimit(
         activeSession?.messages ?? [],
         historyLimit
@@ -1769,7 +1772,7 @@ export default function ChatPage() {
       const sendProvider = session.provider ?? "local";
       const historyLimit =
         session.contextLimit ??
-        (sendProvider === "deployed" ? 262_000 :128_000);
+        (sendProvider === "deployed" ? 262_000 : sendProvider === "public" ? 65_536 :  128_000);
       const trimmedHistory = trimConversationToLimit(
         baseMessages,
         historyLimit
@@ -1931,13 +1934,17 @@ if (pending.length === 0) return;
     }
   };
 
-  const handleProviderChange = (provider: "local" | "deployed") => {
+  const handleProviderChange = (provider: "local" | "deployed" | "public") => {
     setDraftProvider(provider);
     if (activeSessionId && activeSession) {
       if (activeSession.provider === provider) return;
       setSessionProvider(activeSessionId, provider);
       const label =
-        provider === "deployed" ? "Deployed (MiniMax M3)" : "Local (vLLM)";
+        provider === "deployed"
+          ? "Deployed (MiniMax M3)"
+          : provider === "public"
+            ? "Public (Gemma 4 E2B)"
+            : "Local (vLLM)";
       const systemMsg: ChatMessage = {
         id: uid("system"),
         role: "assistant",
@@ -2081,7 +2088,9 @@ if (pending.length === 0) return;
               <span className="font-semibold text-zinc-600">
                 {(activeSession?.provider ?? draftProvider) === "local"
                   ? "Local"
-                  : "Deployed"}
+                  : (activeSession?.provider ?? draftProvider) === "public"
+                    ? "Public"
+                    : "Deployed"}
               </span>{" "}
               aktif · Model{" "}
               <span className="font-semibold text-zinc-600">

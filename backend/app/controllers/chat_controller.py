@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 import httpx
 from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from app.config import MODEL_ID, PROVIDER_BY_ID, SYSTEM_PROMPT, VLLM_BASE_URL, _vllm_model_cache, provider_api_key, resolve_vllm_model
+from app.config import (MODEL_ID, PROVIDER_BY_ID, SYSTEM_PROMPT, VLLM_BASE_URL, _vllm_model_cache, provider_api_key, resolve_vllm_model, GRADIO_MAX_CHARS, GRADIO_MAX_NEW_TOKENS, GRADIO_SYSTEM_PROMPT, GRADIO_TEMPERATURE)
 from app.core.firebase import db
 from app.schemas import ChatRequest, ChatResponse, ChatSessionItem, ChatSessionSaveRequest, Message, ProviderConfig, StoredChatMessage
 from app.services.content_service import expand_content, flatten_content
+from app.services.gradio_service import gradio_respond, gradio_stream
 from app.vllm_on_demand import VllmOnDemandManager, VllmStartupError
 
 from datetime import datetime, timezone
@@ -22,14 +24,41 @@ async def _prepare(body: ChatRequest, request: Request):
     provider = PROVIDER_BY_ID.get(body.provider)
     if provider is None:
         raise HTTPException(status_code=400, detail=f"Unknown provider '{body.provider}'. Available: {', '.join(PROVIDER_BY_ID) or 'none'}.")
+    if provider.kind == "gradio":
+        return provider, provider.model, "", {}, [], _gradio_payload(body)
     key = provider_api_key(provider)
-    if provider.kind == "wandb" and not key:
-        raise HTTPException(status_code=503, detail=f"Provider '{provider.id}' is not configured (missing API key).")
+    if provider.kind == "wandb"and not key:
+        raise HTTPException(status_code=503, detail=f"Provider '{provider.id}' is not configured (missing API key.")
     model = (await resolve_vllm_model(request.app.state.http) or provider.model) if provider.kind == "vllm" else provider.model
     messages = [{"role": m.role, "content": expand_content(m.content) if provider.kind == "wandb" else flatten_content(m.content)} for m in body.messages]
     if SYSTEM_PROMPT and not any(m["role"] == "system" for m in messages):
         messages.insert(0, {"role": "system", "content": SYSTEM_PROMPT})
-    return provider, model, f"{provider.base_url}/v1/chat/completions", ({"Authorization": f"Bearer {key}"} if provider.kind == "wandb" else {}), messages
+    return provider, model, f"{provider.base_url}/v1/chat/completions", ({"Authorization": f"Bearer {key}"} if provider.kind == "wandb" else {}), messages, None
+
+
+def _gradio_payload(body: ChatRequest) -> dict:
+    turns = [m for m in body.messages if m.role in ("user", "assistant")]
+    if not turns or turns[-1].role != "user":
+        raise HTTPException(status_code=400, detail="Gradio provider requires the last message to be a user message.")
+    lines = []
+    for m in turns[:-1]:
+        label = "User" if m.role == "user" else "Asisten"
+        text = flatten_content(m.content).strip()
+        if text:
+            lines.append(f"{label}: {text}")
+    question = flatten_content(turns[-1].content).strip()
+    message_text = "\n\n".join([*lines, f"User: {question}"]) if lines else question
+    if len(message_text) > GRADIO_MAX_CHARS:
+        message_text = "\n\n[dokumen dipangkas untuk memenuhi batas konteks]\n\n" + message_text[-GRADIO_MAX_CHARS:]
+    return {
+        "message": {"text": message_text, "files": []},
+        "system_prompt": GRADIO_SYSTEM_PROMPT,
+        "enable_thinking": False,
+        "max_new_tokens": max(64, GRADIO_MAX_NEW_TOKENS),
+        "temperature": max(0.0, min(1.5, GRADIO_TEMPERATURE)),
+        "top_p": 0.95,
+        "top_k": 64,
+    }
 
 
 async def _acquire(body: ChatRequest, request: Request):
@@ -67,11 +96,21 @@ def _text(value) -> str:
 async def chat(body: ChatRequest, request: Request) -> ChatResponse:
     manager = await _acquire(body, request)
     try:
-        provider, model, url, headers, messages = await _prepare(body, request)
+        provider, model, url, headers, messages, gradio = await _prepare(body, request)
+        if gradio is not None:
+            try:
+                content = await asyncio.to_thread(gradio_respond, provider.base_url, gradio)
+            except Exception as exc:
+                raise HTTPException(status_code=502, detail=f"{provider.name} returned an invalid response: {exc}") from exc
+            if not content:
+                raise HTTPException(status_code=502, detail=f"{provider.name} returned an empty response.")
+            return ChatResponse(message=Message(role="assistant", content=content, thinking=None), model=model, provider=body.provider)
+ 
         try:
             response = await request.app.state.http.post(url, headers=headers, json={"model": model, "messages": messages, "temperature": body.temperature, "max_tokens": body.max_tokens, "stream": False})
             response.raise_for_status()
         except httpx.HTTPError as exc:
+
             _raise_provider_error(exc, provider.name)
         try:
             data = response.json()
@@ -82,6 +121,7 @@ async def chat(body: ChatRequest, request: Request) -> ChatResponse:
         if not content:
             raise HTTPException(status_code=502, detail=f"{provider.name} returned an empty response.")
         return ChatResponse(message=Message(role="assistant", content=content, thinking=_text(message.get("reasoning_content") or message.get("reasoning")) or None), model=data.get("model", provider.model), provider=body.provider)
+
     finally:
         if manager is not None:
             await manager.release()
@@ -94,7 +134,7 @@ def _event(payload: dict) -> str:
 async def chat_stream(body: ChatRequest, request: Request) -> StreamingResponse:
     manager = await _acquire(body, request)
     try:
-        provider, model, url, headers, messages = await _prepare(body, request)
+        provider, model, url, headers, messages, gradio = await _prepare(body, request)
     except Exception:
         if manager is not None:
             await manager.release()
@@ -102,6 +142,38 @@ async def chat_stream(body: ChatRequest, request: Request) -> StreamingResponse:
 
     async def stream():
         try:
+            if gradio is not None:
+                queue: asyncio.Queue[tuple[str, object]] = asyncio.Queue()
+
+                def producer():
+                    try:
+                        for chunk in gradio_stream(provider.base_url, gradio):
+                            queue.put_nowait(("chunk", chunk))
+                    except Exception as exc:
+                        queue.put_nowait(("error", f"{provider.name} stream failed: {exc}"))
+                    finally:
+                        queue.put_nowait(("done", None))
+
+                task = asyncio.create_task(asyncio.to_thread(producer))
+                prev = ""
+                while True:
+                    kind_val, value = await queue.get()
+                    if kind_val == "chunk":
+                        text = str(value)
+                        delta = text[len(prev):]
+                        prev = text
+                        if delta:
+                            yield _event({"type": "answer", "content": delta})
+                    elif kind_val == "error":
+                        yield _event({"type": "error", "content": value})
+                        break
+                    else:
+                        break
+                if not task.done():
+                    task.cancel()
+                yield _event({"type": "done", "model": model})
+                return
+
             async with request.app.state.http.stream("POST", url, headers=headers, json={"model": model, "messages": messages, "temperature": body.temperature, "max_tokens": body.max_tokens, "stream": True}) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():

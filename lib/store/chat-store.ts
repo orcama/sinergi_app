@@ -38,9 +38,10 @@ function truncateTitle(text: string, max = 24): string {
   return clean.length > max ? `${clean.slice(0, max)}...` : clean;
 }
 
-const DEFAULT_CONTEXT_LIMITS: Record<"local" | "deployed", number> = {
+const DEFAULT_CONTEXT_LIMITS: Record<"local" | "deployed" | "public", number> = {
   local: 12_000,
   deployed: 262_000,
+  public: 65_536,
 };
 
 interface ChatState {
@@ -48,7 +49,7 @@ interface ChatState {
   activeSessionId: string | null;
   messages: ChatMessage[];
   isLoading: boolean;
-  providerContextLimits: Record<"local" | "deployed", number>;
+  providerContextLimits: Record<"local" | "deployed" | "public", number>;
 
   // selectors (read-only helpers)
   activeSession: () => ChatSession | null;
@@ -66,9 +67,9 @@ interface ChatState {
   deleteChat: (id: string) => void;
   getSession: (id: string) => ChatSession | null;
   setSessionModel: (id: string, model: "sft" | "rag") => void;
-  setSessionProvider: (id: string, provider: "local" | "deployed") => void;
+  setSessionProvider: (id: string, provider: "local" | "deployed" | "public") => void;
   setProviderContextLimits: (
-    limits: Partial<Record<"local" | "deployed", number>>
+    limits: Partial<Record<"local" | "deployed" | "public", number>>
   ) => void;
 
   // low-level message mutation used by the chat page send flow

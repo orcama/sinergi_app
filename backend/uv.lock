@@ -545,6 +545,22 @@ wheels = [
 ]
 
 [[package]]
+name = "gradio-client"
+version = "2.6.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "fsspec" },
+    { name = "httpx" },
+    { name = "huggingface-hub" },
+    { name = "packaging" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/85/32/ec28ca6b19b22c7ea7f4232078f856790e565f5e87f32cb15a5e406b0ba1/gradio_client-2.6.1.tar.gz", hash = "sha256:0e605bf8683a27583868b933a083e84706b974404815d9795370ef8a62584f4e", size = 61673, upload-time = "2026-08-24T20:49:48.07Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/36/1b/e31b3776a4892fac8e2f980265a462f642df84bf488d5d667ef821a801af/gradio_client-2.6.1-py3-none-any.whl", hash = "sha256:df3752925fbaaa56f7bfeeb0064ae23591ec3976432443748dd663a9729ef23b", size = 62558, upload-time = "2026-08-24T20:49:46.346Z" },
+]
+
+[[package]]
 name = "grpcio"
 version = "1.83.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1397,6 +1413,7 @@ dependencies = [
     { name = "fastapi", extra = ["standard"] },
     { name = "fastembed" },
     { name = "firebase-admin" },
+    { name = "gradio-client" },
     { name = "httpx" },
     { name = "pypdf" },
     { name = "python-dotenv" },
@@ -1413,6 +1430,7 @@ requires-dist = [
     { name = "fastapi", extras = ["standard"], specifier = ">=0.133.0,<0.137" },
     { name = "fastembed", specifier = ">=0.7,<1" },
     { name = "firebase-admin", specifier = ">=7.5.0" },
+    { name = "gradio-client", specifier = ">=2.6.1" },
     { name = "httpx", specifier = ">=0.28.1,<0.29" },
     { name = "pypdf", specifier = ">=6.16.1" },
     { name = "python-dotenv", specifier = ">=1.2.3" },
