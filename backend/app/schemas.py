@@ -5,6 +5,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field
 
 MAX_DATA_URL_LENGTH = 14_000_000
+MAX_CHAT_OUTPUT_TOKENS = 65_536
 
 
 class ProviderConfig(BaseModel):
@@ -16,6 +17,7 @@ class ProviderConfig(BaseModel):
     supports_images: bool = False
     api_key_env: str | None = None
     context_window: int = 128_000
+    max_output_tokens: int = 4096
 
 
 class TextPart(BaseModel):
@@ -47,7 +49,7 @@ class ChatRequest(BaseModel):
     provider: str = "vllm"
     messages: list[Message] = Field(min_length=1, max_length=50)
     temperature: float = Field(default=0.6, ge=0, le=2)
-    max_tokens: int = Field(default=1024, ge=1, le=4096)
+    max_tokens: int = Field(default=1024, ge=1, le=MAX_CHAT_OUTPUT_TOKENS)
     stream: bool = False
 
 

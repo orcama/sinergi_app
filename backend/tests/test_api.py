@@ -279,6 +279,9 @@ async def test_models_endpoint_lists_providers() -> None:
     assert wandb["supports_images"] is True
     vllm = next(p for p in payload["providers"] if p["id"] == "vllm")
     assert vllm["supports_images"] is False
+    gradio = next(p for p in payload["providers"] if p["id"] == "gradio")
+    assert gradio["max_output_tokens"] == 65_536
+    assert gradio["configured"] is True
 
 
 @pytest.mark.asyncio
@@ -378,7 +381,7 @@ def test_gradio_payload_builds_history_and_clamps_params() -> None:
         "files": [],
     }
     assert "history" not in payload
-    assert payload["max_new_tokens"] == GRADIO_MAX_NEW_TOKENS
+    assert payload["max_new_tokens"] == min(4096, GRADIO_MAX_NEW_TOKENS)
     assert payload["temperature"] == GRADIO_TEMPERATURE
     assert payload["system_prompt"] == GRADIO_SYSTEM_PROMPT
     assert payload["enable_thinking"] is False
@@ -391,6 +394,31 @@ def test_public_provider_defaults() -> None:
     assert provider.kind == "gradio"
     assert provider.base_url.rstrip("/") == GRADIO_SPACE
     assert provider.context_window == GRADIO_CONTEXT_WINDOW
+
+
+def test_chat_request_accepts_64k_output_limit() -> None:
+    from app.schemas import ChatRequest, Message
+
+    body = ChatRequest(
+        provider="gradio",
+        messages=[Message(role="user", content="Ringkas putusan ini")],
+        max_tokens=65_536,
+    )
+
+    assert body.max_tokens == 65_536
+
+
+def test_gradio_payload_forwards_requested_64k_limit() -> None:
+    from app.controllers.chat_controller import _gradio_payload
+    from app.schemas import ChatRequest, Message
+
+    body = ChatRequest(
+        provider="gradio",
+        messages=[Message(role="user", content="Susun analisis lengkap")],
+        max_tokens=65_536,
+    )
+
+    assert _gradio_payload(body)["max_new_tokens"] == 65_536
 
 
 def test_extract_pdf_text_from_data_url() -> None:

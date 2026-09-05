@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse
 
 from app.config import (MODEL_ID, PROVIDER_BY_ID, SYSTEM_PROMPT, VLLM_BASE_URL, _vllm_model_cache, provider_api_key, resolve_vllm_model, GRADIO_MAX_CHARS, GRADIO_MAX_NEW_TOKENS, GRADIO_SYSTEM_PROMPT, GRADIO_TEMPERATURE)
 from app.core.firebase import db
-from app.schemas import ChatRequest, ChatResponse, ChatSessionItem, ChatSessionSaveRequest, Message, ProviderConfig, StoredChatMessage
+from app.schemas import MAX_CHAT_OUTPUT_TOKENS, ChatRequest, ChatResponse, ChatSessionItem, ChatSessionSaveRequest, Message, ProviderConfig, StoredChatMessage
 from app.services.content_service import expand_content, flatten_content
 from app.services.gradio_service import gradio_respond, gradio_stream
 from app.vllm_on_demand import VllmOnDemandManager, VllmStartupError
@@ -24,6 +24,11 @@ async def _prepare(body: ChatRequest, request: Request):
     provider = PROVIDER_BY_ID.get(body.provider)
     if provider is None:
         raise HTTPException(status_code=400, detail=f"Unknown provider '{body.provider}'. Available: {', '.join(PROVIDER_BY_ID) or 'none'}.")
+    if body.max_tokens > provider.max_output_tokens:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Provider '{provider.id}' supports at most {provider.max_output_tokens} output tokens.",
+        )
     if provider.kind == "gradio":
         return provider, provider.model, "", {}, [], _gradio_payload(body)
     key = provider_api_key(provider)
@@ -54,7 +59,10 @@ def _gradio_payload(body: ChatRequest) -> dict:
         "message": {"text": message_text, "files": []},
         "system_prompt": GRADIO_SYSTEM_PROMPT,
         "enable_thinking": False,
-        "max_new_tokens": max(64, GRADIO_MAX_NEW_TOKENS),
+        "max_new_tokens": max(
+            64,
+            min(body.max_tokens, GRADIO_MAX_NEW_TOKENS, MAX_CHAT_OUTPUT_TOKENS),
+        ),
         "temperature": max(0.0, min(1.5, GRADIO_TEMPERATURE)),
         "top_p": 0.95,
         "top_k": 64,
@@ -157,7 +165,13 @@ async def chat_stream(body: ChatRequest, request: Request) -> StreamingResponse:
                 task = asyncio.create_task(asyncio.to_thread(producer))
                 prev = ""
                 while True:
-                    kind_val, value = await queue.get()
+                    try:
+                        kind_val, value = await asyncio.wait_for(queue.get(), timeout=15)
+                    except TimeoutError:
+                        # Keep Cloudflare/browser connections alive while the
+                        # Space is queued, cold-starting, or generating slowly.
+                        yield ": keep-alive\n\n"
+                        continue
                     if kind_val == "chunk":
                         text = str(value)
                         delta = text[len(prev):]
