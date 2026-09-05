@@ -10,7 +10,7 @@ import httpx
 from pydantic import ValidationError
 from dotenv import load_dotenv
 
-from app.schemas import ProviderConfig
+from app.schemas import MAX_CHAT_OUTPUT_TOKENS, ProviderConfig
 
 load_dotenv()
 
@@ -49,9 +49,12 @@ DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "vllm")
 LOCAL_CONTEXT_WINDOW = int(os.getenv("VLLM_MAX_MODEL_LEN", "65536"))
 GRADIO_SPACE = os.getenv("GRADIO_SPACE", "galihww/inaverdict-gemma-v2-demo").rstrip("/")
 GRADIO_MODEL_ID = (os.getenv("GRADIO_MODEL_ID", "").strip() or "Legal-verse/InaVerdict-gemma-v2")
-GRADIO_CONTEXT_WINDOW = int(os.getenv("GRADIO_CONTEXT_WINDOW", "65536"))
+GRADIO_CONTEXT_WINDOW = int(os.getenv("GRADIO_CONTEXT_WINDOW", "131072"))
 GRADIO_MAX_CHARS = int(os.getenv("GRADIO_MAX_CHARS", "12000"))
-GRADIO_MAX_NEW_TOKENS = int(os.getenv("GRADIO_MAX_NEW_TOKENS", "512"))
+GRADIO_MAX_NEW_TOKENS = min(
+    int(os.getenv("GRADIO_MAX_NEW_TOKENS", str(MAX_CHAT_OUTPUT_TOKENS))),
+    MAX_CHAT_OUTPUT_TOKENS,
+)
 GRADIO_TEMPERATURE = float(os.getenv("GRADIO_TEMPERATURE", "0.2"))
 GRADIO_SYSTEM_PROMPT = (
     os.getenv(
@@ -150,7 +153,7 @@ def _default_providers() -> list[ProviderConfig]:
     return [
         ProviderConfig(id="vllm", name="vLLM (Local)", model=discover_vllm_model(), base_url=VLLM_BASE_URL, kind="vllm", context_window=LOCAL_CONTEXT_WINDOW),
         ProviderConfig(id="wandb", name="WandB (MiniMax M3)", model=WANDB_MODEL_ID, base_url=WANDB_BASE_URL, kind="wandb", supports_images=True, api_key_env="WANDB_API_KEY", context_window=context_window_from_models_md()),
-        ProviderConfig(id="gradio", name="Public (Gemma 4 E2B)", model=GRADIO_MODEL_ID, base_url=GRADIO_SPACE, kind="gradio", context_window=GRADIO_CONTEXT_WINDOW),
+        ProviderConfig(id="gradio", name="Public (Gemma 4 E2B)", model=GRADIO_MODEL_ID, base_url=GRADIO_SPACE, kind="gradio", context_window=GRADIO_CONTEXT_WINDOW, max_output_tokens=GRADIO_MAX_NEW_TOKENS),
     ]
 
 

@@ -147,12 +147,15 @@ type ChatPayloadMessage = {
   content: string | ChatContentPart[];
 };
 
+const MAX_OUTPUT_OPTIONS = [1024, 4096, 8192, 16_384, 32_768, 65_536] as const;
+
 async function buildChatBody(
   messages: Pick<ChatMessage, "role" | "content">[],
   provider: "vllm" | "wandb" | "gradio",
+  maxTokens: number,
   context?: string,
   attachments?: Attachment[]
-): Promise<{ provider: "vllm" | "wandb" | "gradio"; messages: ChatPayloadMessage[] }> {
+): Promise<{ provider: "vllm" | "wandb" | "gradio"; messages: ChatPayloadMessage[]; max_tokens: number }> {
   let lastUserIndex = -1;
   messages.forEach((m, i) => {
     if (m.role === "user") lastUserIndex = i;
@@ -196,7 +199,7 @@ async function buildChatBody(
     );
   }
 
-  return { provider, messages: bodyMessages };
+  return { provider, messages: bodyMessages, max_tokens: maxTokens };
 }
 
 interface StreamHandlers {
@@ -267,11 +270,12 @@ async function streamChat(
 async function requestAIResponse(
   messages: Pick<ChatMessage, "role" | "content">[],
   provider: "vllm" | "wandb" | "gradio",
+  maxTokens: number,
   context?: string,
   attachments?: Attachment[],
   handlers?: StreamHandlers
 ): Promise<ChatMessage> {
-  const body = await buildChatBody(messages, provider, context, attachments);
+  const body = await buildChatBody(messages, provider, maxTokens, context, attachments);
 
   // Streaming path (menampilkan thinking + answer secara real-time).
   if (handlers) {
@@ -345,6 +349,7 @@ async function requestRagResponse(
   attachments: Attachment[],
   conversation: Pick<ChatMessage, "role" | "content">[],
   provider: "local" | "deployed" | "public",
+  maxTokens: number,
   handlers?: StreamHandlers
 ): Promise<{ message: ChatMessage; sources: Source[] }> {
   const docIds: string[] = [];
@@ -388,6 +393,7 @@ async function requestRagResponse(
   const message = await requestAIResponse(
     conversation,
     provider === "deployed" ? "wandb" : provider === "public" ? "gradio" : "vllm",
+    maxTokens,
     context ||
       (fallbackText
         ? `[Teks dokumen]\n${fallbackText}`
@@ -1272,6 +1278,37 @@ function ContextUsageBar({ session }: { session: ChatSession | null }) {
   );
 }
 
+function MaxOutputSelector({
+  value,
+  max,
+  onChange,
+  disabled,
+}: {
+  value: number;
+  max: number;
+  onChange: (value: number) => void;
+  disabled: boolean;
+}) {
+  return (
+    <label className="flex items-center gap-1.5 rounded-full bg-white/80 px-3 py-1 text-[11px] font-medium text-zinc-500 shadow-sm ring-1 ring-zinc-100">
+      Output
+      <select
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className="bg-transparent font-semibold text-zinc-700 outline-none disabled:opacity-50"
+        aria-label="Maximum output tokens"
+      >
+        {MAX_OUTPUT_OPTIONS.filter((tokens) => tokens <= max).map((tokens) => (
+          <option key={tokens} value={tokens}>
+            {tokens >= 1024 ? `${tokens / 1024}K` : tokens}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function ChatInput({
   value,
   onChange,
@@ -1466,6 +1503,7 @@ function SourcesSidebar({
 export default function ChatPage() {
   const [isSourcesSidebarOpen, setIsSourcesSidebarOpen] = useState(true);
   const [input, setInput] = useState("");
+  const [maxOutputTokens, setMaxOutputTokens] = useState(1024);
   const [draftModel, setDraftModel] = useState<"sft" | "rag">("sft");
   const [draftProvider, setDraftProvider] = useState<"local" | "deployed" | "public">(
     "local"
@@ -1486,6 +1524,8 @@ export default function ChatPage() {
   const isLoading = useChatStore((s) => s.isLoading);
   const activeSession = useChatStore((s) => s.activeSession());
   const activeMessages = useChatStore((s) => s.activeMessages());
+  const selectedProvider = activeSession?.provider ?? draftProvider;
+  const maxAllowedOutputTokens = selectedProvider === "public" ? 65_536 : 4096;
   const setIsLoading = useChatStore((s) => s.setIsLoading);
   const newSession = useChatStore((s) => s.newSession);
   const selectSession = useChatStore((s) => s.selectSession);
@@ -1503,6 +1543,10 @@ export default function ChatPage() {
   const loadSessions = useChatStore((s) => s.loadSessions);
   const setSessions = useChatStore((s) => s.setSessions);
   const { user, loading } = useAuth();
+
+  useEffect(() => {
+    setMaxOutputTokens((current) => Math.min(current, maxAllowedOutputTokens));
+  }, [maxAllowedOutputTokens]);
 
   useEffect(() => {
     if (loading) return;
@@ -1560,6 +1604,7 @@ export default function ChatPage() {
       conversationAttachments: Attachment[];
       sendModel: "sft" | "rag";
       sendProvider: "local" | "deployed" | "public";
+      sendMaxTokens: number;
     }) => {
       const {
         sessionId,
@@ -1567,6 +1612,7 @@ export default function ChatPage() {
         conversationAttachments,
         sendModel,
         sendProvider,
+        sendMaxTokens,
       } = params;
 
       const assistantId = uid("ai");
@@ -1627,6 +1673,7 @@ export default function ChatPage() {
             conversationAttachments,
             conversation,
             sendProvider,
+            sendMaxTokens,
             streamHandlers
           );
           upsertSessionMessage(
@@ -1645,6 +1692,7 @@ export default function ChatPage() {
           const aiResponse = await requestAIResponse(
             conversation,
             provider,
+            sendMaxTokens,
             undefined,
             conversationAttachments,
             streamHandlers
@@ -1710,10 +1758,10 @@ export default function ChatPage() {
 
       const historyLimit =
         activeSession?.contextLimit ??
-        (sendProvider === "deployed" ? 262_000 : sendProvider === "public" ? 65_536 :  128_000);
+        (sendProvider === "deployed" ? 262_000 : sendProvider === "public" ? 131_072 : 65_536);
       const trimmedHistory = trimConversationToLimit(
         activeSession?.messages ?? [],
-        historyLimit
+        Math.max(1024, historyLimit - maxOutputTokens - 2048)
       );
       const conversation = [...trimmedHistory, userMessage].map(
         ({ role, content }) => ({ role, content })
@@ -1729,6 +1777,7 @@ export default function ChatPage() {
         conversationAttachments,
         sendModel,
         sendProvider,
+        sendMaxTokens: maxOutputTokens,
       });
     },
     [
@@ -1743,6 +1792,7 @@ export default function ChatPage() {
       setSessionModel,
       setSessionProvider,
       streamAssistantResponse,
+      maxOutputTokens,
     ]
   );
 
@@ -1772,10 +1822,10 @@ export default function ChatPage() {
       const sendProvider = session.provider ?? "local";
       const historyLimit =
         session.contextLimit ??
-        (sendProvider === "deployed" ? 262_000 : sendProvider === "public" ? 65_536 :  128_000);
+        (sendProvider === "deployed" ? 262_000 : sendProvider === "public" ? 131_072 : 65_536);
       const trimmedHistory = trimConversationToLimit(
         baseMessages,
-        historyLimit
+        Math.max(1024, historyLimit - maxOutputTokens - 2048)
       );
       const conversation = [...trimmedHistory].map(
         ({ role, content }) => ({ role, content })
@@ -1792,9 +1842,10 @@ export default function ChatPage() {
         conversationAttachments,
         sendModel,
         sendProvider,
+        sendMaxTokens: maxOutputTokens,
       });
     },
-    [isLoading, removeSessionMessage, streamAssistantResponse, setIsLoading]
+    [isLoading, maxOutputTokens, removeSessionMessage, streamAssistantResponse, setIsLoading]
   );
   const handlePickTemplate = (text: string) => {
     setInput(text);
@@ -2062,12 +2113,20 @@ if (pending.length === 0) return;
         </div>
 
         <div className="sticky bottom-0 mx-auto w-full max-w-3xl px-4 pb-5 sm:px-6">
-          <div className="mb-2 flex items-center justify-between gap-3 px-1">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1">
             <ModelSwitch
               value={activeSession?.provider ?? draftProvider}
               onChange={handleProviderChange}
             />
-            <ContextUsageBar session={activeSession} />
+            <div className="flex items-center gap-2">
+              <MaxOutputSelector
+                value={maxOutputTokens}
+                max={maxAllowedOutputTokens}
+                onChange={setMaxOutputTokens}
+                disabled={isLoading}
+              />
+              <ContextUsageBar session={activeSession} />
+            </div>
           </div>
           <ChatInput
             value={input}

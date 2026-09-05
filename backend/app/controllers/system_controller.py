@@ -35,7 +35,7 @@ async def list_models(request: Request) -> JSONResponse:
     providers = []
     for provider in PROVIDERS:
         model = await resolve_vllm_model(request.app.state.http) if provider.kind == "vllm" else provider.model
-        providers.append({"id": provider.id, "name": provider.name, "model": model, "kind": provider.kind, "supports_images": provider.supports_images, "context_window": provider.context_window, "configured": bool(provider_api_key(provider))})
+        providers.append({"id": provider.id, "name": provider.name, "model": model, "kind": provider.kind, "supports_images": provider.supports_images, "context_window": provider.context_window, "max_output_tokens": provider.max_output_tokens, "configured": provider.kind == "gradio" or bool(provider_api_key(provider))})
     from app.config import DEFAULT_PROVIDER
     return JSONResponse(content={"default": DEFAULT_PROVIDER, "providers": providers})
 
